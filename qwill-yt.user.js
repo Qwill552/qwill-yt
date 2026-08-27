@@ -1,10 +1,14 @@
 // ==UserScript==
 // @name         Qwill YT — отправить в очередь
 // @namespace    qwill-yt.mooo.com
-// @version      1.0
-// @description  Кнопка слева от лайка на YouTube — переносит видео в очередь на qwill-yt.mooo.com с выбором приоритета
+// @version      1.1
+// @description  Кнопка слева от лайка на YouTube и на странице аниме AnimeGO — переносит видео в очередь на qwill-yt.mooo.com с выбором приоритета
 // @author       Qwill
 // @match        https://www.youtube.com/*
+// @match        https://animego.me/*
+// @match        https://animego.org/*
+// @match        https://animego.one/*
+// @match        https://animego.club/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      qwill-yt.mooo.com
@@ -20,6 +24,8 @@
   const INGEST_TOKEN = "__INGEST_TOKEN__";
   const SUCCESS_MS = 1600;
   const ERROR_MS = 2200;
+
+  const IS_ANIMEGO = /(^|\.)animego\./i.test(location.hostname);
 
   const EASE = "cubic-bezier(0.2,0,0,1)";
 
@@ -302,7 +308,7 @@
     return id ? "https://www.youtube.com/watch?v=" + id : location.href;
   }
 
-  function sendVideo(url, priority, done) {
+  function sendPayload(payload, done) {
     GM_xmlhttpRequest({
       method: "POST",
       url: API_URL,
@@ -310,12 +316,16 @@
         "Content-Type": "application/json",
         Authorization: "Bearer " + INGEST_TOKEN,
       },
-      data: JSON.stringify({ url, priority }),
+      data: JSON.stringify(payload),
       timeout: 12000,
       onload: (res) => done(res.status >= 200 && res.status < 300),
       onerror: () => done(false),
       ontimeout: () => done(false),
     });
+  }
+
+  function sendVideo(url, priority, done) {
+    sendPayload({ url, priority }, done);
   }
 
   function isWatchPage() {
@@ -603,6 +613,7 @@
   document.addEventListener(
     "mouseover",
     (event) => {
+      if (IS_ANIMEGO) return;
       const card = event.target.closest(CARD_SELECTOR);
       if (card) lastHoveredCard = card;
     },
@@ -634,6 +645,7 @@
   document.addEventListener(
     "contextmenu",
     (event) => {
+      if (IS_ANIMEGO) return;
       const card = cardUnderPoint(event.clientX, event.clientY);
       if (!card) return;
 
@@ -654,14 +666,254 @@
     true,
   );
 
-  const observer = new MutationObserver(() => ensureInjected());
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  function initYoutube() {
+    const observer = new MutationObserver(() => ensureInjected());
+    observer.observe(document.documentElement, { childList: true, subtree: true });
 
-  document.addEventListener("yt-navigate-finish", () => {
-    injectedOnce = false;
-    window.setTimeout(ensureInjected, 300);
-  });
+    document.addEventListener("yt-navigate-finish", () => {
+      injectedOnce = false;
+      window.setTimeout(ensureInjected, 300);
+    });
 
-  window.setInterval(ensureInjected, 1500);
-  ensureInjected();
+    window.setInterval(ensureInjected, 1500);
+    ensureInjected();
+  }
+
+  // ============================== AnimeGO ==============================
+  // Часть тайтлов AnimeGO не отдаёт анонимным запросам — сервер очереди
+  // получает 404. Поэтому карточку собираем прямо здесь, в браузере с
+  // залогиненной сессией, и отправляем на сервер уже готовой.
+
+  const AG_PRIORITIES = [
+    { priority: "high", label: "Важно", cls: "btn-danger", icon: ICONS.flame },
+    {
+      priority: "medium",
+      label: "Средне",
+      cls: "btn-warning",
+      icon: ICONS.circle,
+      fill: true,
+    },
+    { priority: "low", label: "Позже", cls: "btn-secondary", icon: ICONS.circle },
+  ];
+
+  function agTitleEl() {
+    return document.querySelector(".entity__title h1");
+  }
+
+  /** Инфоблок — пары «подпись → значение» в соседних ячейках грида. */
+  function agFieldEl(label) {
+    const labels = document.querySelectorAll(
+      ".text-body-tertiary.text-opacity-75",
+    );
+    for (const el of labels) {
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (text === label) return el.nextElementSibling;
+    }
+    return null;
+  }
+
+  function agText(label) {
+    const el = agFieldEl(label);
+    if (!el) return null;
+    return (el.textContent || "").replace(/\s+/g, " ").trim() || null;
+  }
+
+  /** Студий может быть несколько — каждая отдельной ссылкой. */
+  function agLinks(label) {
+    const el = agFieldEl(label);
+    if (!el) return null;
+    const names = Array.from(el.querySelectorAll("a"))
+      .map((a) => (a.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (names.length > 0) return names.join(", ");
+    return agText(label);
+  }
+
+  function agJsonLd() {
+    const blocks = document.querySelectorAll(
+      'script[type="application/ld+json"]',
+    );
+    for (const block of blocks) {
+      try {
+        const data = JSON.parse(block.textContent || "");
+        if (data && (data.name || data.image)) return data;
+      } catch (err) {
+        /* на странице бывает и чужой ld+json */
+      }
+    }
+    return null;
+  }
+
+  function agPoster() {
+    const img = document.querySelector(".entity__poster img");
+    const src = img && (img.getAttribute("src") || img.getAttribute("data-src"));
+    if (src) return src;
+    const meta = document.querySelector('meta[property="og:image"]');
+    return meta ? meta.getAttribute("content") : null;
+  }
+
+  function agCollect() {
+    const ld = agJsonLd() || {};
+    const titleEl = agTitleEl();
+    const title =
+      (titleEl && (titleEl.textContent || "").replace(/\s+/g, " ").trim()) ||
+      (ld.name || "").trim();
+    if (!title) return null;
+
+    return {
+      source: "animego",
+      url: location.origin + location.pathname,
+      title: title,
+      studio: agLinks("Студия") || "",
+      thumbnail: agPoster() || (ld.image || "") || "",
+      episodes: agText("Эпизоды"),
+      publishedAt: ld.datePublished || agText("Выпуск") || null,
+    };
+  }
+
+  function agInjectStyle() {
+    if (document.getElementById("qwyt-ag-style")) return;
+    const style = document.createElement("style");
+    style.id = "qwyt-ag-style";
+    style.textContent =
+      ".qwyt-ag-card svg{width:1.1em;height:1.1em;flex-shrink:0;}" +
+      ".qwyt-ag-card .qwyt-ag-choose button{justify-content:center;}";
+    document.head.appendChild(style);
+  }
+
+  function agBuildCard() {
+    const card = document.createElement("div");
+    card.className = "card mb-0 qwyt-ag-card";
+
+    const body = document.createElement("div");
+    body.className = "card-body p-3";
+
+    const caption = document.createElement("div");
+    caption.className = "small text-body-tertiary mb-2";
+    caption.textContent = "Очередь Qwill";
+
+    const idle = document.createElement("div");
+    idle.className = "d-grid";
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn btn-primary icon-link justify-content-center gap-2";
+    openBtn.appendChild(svgEl(ICONS.link));
+    openBtn.appendChild(document.createTextNode("В очередь"));
+    idle.appendChild(openBtn);
+
+    const choose = document.createElement("div");
+    choose.className = "d-grid gap-2 qwyt-ag-choose";
+    choose.style.display = "none";
+
+    const status = document.createElement("div");
+    status.className = "small";
+    status.style.display = "none";
+
+    body.append(caption, idle, choose, status);
+    card.appendChild(body);
+
+    let resetTimer = null;
+
+    function setState(state) {
+      idle.style.display = state === "idle" ? "" : "none";
+      choose.style.display = state === "choose" ? "" : "none";
+      status.style.display = state === "status" ? "" : "none";
+    }
+
+    function showStatus(ok, text) {
+      status.className = "small " + (ok ? "text-success" : "text-danger");
+      status.textContent = text;
+      setState("status");
+      window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(
+        () => setState("idle"),
+        ok ? SUCCESS_MS : ERROR_MS,
+      );
+    }
+
+    openBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      window.clearTimeout(resetTimer);
+      setState("choose");
+    });
+
+    for (const item of AG_PRIORITIES) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-sm icon-link gap-2 " + item.cls;
+      btn.appendChild(svgEl(item.icon, item.fill ? { fill: "currentColor" } : undefined));
+      btn.appendChild(document.createTextNode(item.label));
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const payload = agCollect();
+        if (!payload) {
+          showStatus(false, "Не удалось прочитать страницу");
+          return;
+        }
+        payload.priority = item.priority;
+        status.className = "small text-body-tertiary";
+        status.textContent = "Отправляю…";
+        setState("status");
+        sendPayload(payload, (ok) => {
+          showStatus(ok, ok ? "Добавлено в очередь" : "Не удалось отправить");
+        });
+      });
+      choose.appendChild(btn);
+    }
+
+    function onOutsideClick(event) {
+      // Turbo пересобирает страницу — снимаем слушатель вместе с карточкой.
+      if (!card.isConnected) {
+        document.removeEventListener("click", onOutsideClick, true);
+        return;
+      }
+      if (choose.style.display === "none") return;
+      if (!card.contains(event.target)) setState("idle");
+    }
+    document.addEventListener("click", onOutsideClick, true);
+
+    return card;
+  }
+
+  function agEnsureInjected() {
+    const titleBlock = document.querySelector(".entity__title");
+    if (!titleBlock || !agTitleEl()) {
+      document.querySelectorAll(".qwyt-ag-mount").forEach((el) => el.remove());
+      return;
+    }
+
+    agInjectStyle();
+
+    // Правая колонка страницы — там, где на широком экране пустое место.
+    const row = document.querySelector(".content-page .container-xxl > .d-flex");
+    if (row && !document.getElementById("qwyt-ag-side")) {
+      const side = document.createElement("div");
+      side.id = "qwyt-ag-side";
+      side.className = "qwyt-ag-mount d-none d-xl-block";
+      side.style.flex = "0 0 240px";
+      side.style.maxWidth = "240px";
+      side.appendChild(agBuildCard());
+      row.appendChild(side);
+    }
+
+    // На узких экранах правой колонки нет — кладём карточку над заголовком.
+    if (titleBlock.parentElement && !document.getElementById("qwyt-ag-inline")) {
+      const inline = document.createElement("div");
+      inline.id = "qwyt-ag-inline";
+      inline.className = "qwyt-ag-mount d-xl-none mb-3";
+      inline.appendChild(agBuildCard());
+      titleBlock.parentElement.insertBefore(inline, titleBlock);
+    }
+  }
+
+  function initAnimego() {
+    // Сайт на Turbo: страницы меняются без перезагрузки.
+    document.addEventListener("turbo:load", () => agEnsureInjected());
+    document.addEventListener("turbo:render", () => agEnsureInjected());
+    window.setInterval(agEnsureInjected, 1500);
+    agEnsureInjected();
+  }
+
+  if (IS_ANIMEGO) initAnimego();
+  else initYoutube();
 })();

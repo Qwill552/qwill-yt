@@ -84,8 +84,8 @@ function ymd(year: number, monthIndex: number, day: number): string | null {
   return `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
 }
 
-/** «4 апреля 2026», «4 апр. 2026», «2026-07-04» */
-function parseRussianDate(raw: string | null | undefined): string | null {
+/** «4 апреля 2026», «4 апр. 2026», «2026-07-04» → «2026-04-04» */
+export function parseAnimegoDate(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const cleaned = raw.replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
@@ -222,9 +222,9 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
   const studio = fieldLinks(html, "Студия") ?? "AnimeGO";
   const episodes = fieldValue(html, "Эпизоды");
   const publishedAt =
-    parseRussianDate(ld?.datePublished) ??
-    parseRussianDate(fieldValue(html, "Выпуск")) ??
-    parseRussianDate(fieldValue(html, "Сезон"));
+    parseAnimegoDate(ld?.datePublished) ??
+    parseAnimegoDate(fieldValue(html, "Выпуск")) ??
+    parseAnimegoDate(fieldValue(html, "Сезон"));
 
   if (!thumbnail && title === "Аниме") {
     throw new Error("Страница AnimeGO не распознана");

@@ -11,6 +11,7 @@ import {
   PRIORITY_META,
   type Category,
   type Priority,
+  type QueueSource,
   type QueueVideo,
   useQueue,
 } from "@/lib/queue-store";
@@ -34,6 +35,8 @@ type PendingIngestItem = {
   channel: string;
   thumbnail: string;
   durationSeconds: number | null;
+  episodes?: string | null;
+  source?: QueueSource;
   publishedAt: string | null;
   priority: Priority;
   addedAt: number;
@@ -72,26 +75,27 @@ export function QueueApp() {
       .then((items: PendingIngestItem[]) => {
         if (cancelled || !Array.isArray(items) || items.length === 0) return;
         for (const item of items) {
+          const source = item.source ?? "youtube";
           addVideo({
             id: item.videoId,
             url: item.url,
             title: item.title,
             channel: item.channel,
             durationSeconds: item.durationSeconds,
-            episodes: null,
+            episodes: item.episodes ?? null,
             watchedEpisodes: 0,
             publishedAt: item.publishedAt,
             thumbnail: item.thumbnail,
-            source: "youtube",
+            source,
             priority: item.priority,
-            category: "main",
+            category: source === "animego" ? "anime" : "main",
             addedAt: item.addedAt,
           });
         }
         toast.success(
           items.length === 1
-            ? "Прилетела ссылка с YouTube"
-            : `Прилетело ссылок с YouTube: ${items.length}`,
+            ? "Прилетела ссылка из браузера"
+            : `Прилетело ссылок из браузера: ${items.length}`,
         );
       })
       .catch(() => {

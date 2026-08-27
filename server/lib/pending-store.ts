@@ -3,12 +3,18 @@ import { dirname, join } from "node:path";
 import type { Priority } from "../../src/lib/queue-store";
 
 export type PendingItem = {
+  /** id будущей карточки: id видео YouTube или «animego:<slug>» */
   videoId: string;
   url: string;
   title: string;
+  /** канал YouTube или студия-аниматор */
   channel: string;
   thumbnail: string;
   durationSeconds: number | null;
+  /** «9 / 14» — только для аниме */
+  episodes?: string | null;
+  /** старые записи в файле его не знают — считаем их youtube */
+  source?: "youtube" | "animego";
   publishedAt: string | null;
   priority: Priority;
   addedAt: number;
