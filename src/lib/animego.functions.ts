@@ -177,14 +177,14 @@ function cleanTitle(raw: string | null | undefined): string | null {
   return cleaned || null;
 }
 
-export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
-  const slug = extractAnimegoSlug(url);
-  if (!slug) {
-    throw new Error("Не похоже на ссылку AnimeGO");
-  }
-
-  const pageUrl = animegoUrl(slug);
-
+/**
+ * Общий низкоуровневый fetch страницы тайтла — используется и разовым
+ * резолвом при добавлении карточки, и фоновым чекером серий. Часть тайтлов
+ * AnimeGO не отдаёт анонимным запросам: в браузере с залогиненной сессией
+ * страница открывается, а серверу прилетает 404 (тогда карточку/обновление
+ * приходится собирать в браузере — см. qwill-yt.user.js).
+ */
+export async function fetchAnimegoHtml(pageUrl: string): Promise<string> {
   let res: Response;
   try {
     res = await fetch(pageUrl, {
@@ -195,8 +195,6 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
     throw new Error("AnimeGO не отвечает");
   }
   if (res.status === 404) {
-    // Часть тайтлов AnimeGO не отдаёт анонимным запросам: в браузере с
-    // залогиненной сессией страница открывается, а серверу прилетает 404.
     throw new Error("AnimeGO отвечает 404 — сервер не может прочитать страницу");
   }
   if (!res.ok) {
@@ -207,6 +205,65 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
   if (!html) {
     throw new Error("Не удалось прочитать страницу AnimeGO");
   }
+  return html;
+}
+
+/** «Статус» тайтла — «Онгоинг», «Завершён» и т.п., как на странице. */
+export function parseAnimegoStatus(html: string): string | null {
+  return fieldValue(html, "Статус");
+}
+
+/** «19 / 24», «8 / ?», «24» — то же поле, что читает `resolveAnimegoMeta`. */
+export function parseAnimegoEpisodes(html: string): string | null {
+  return fieldValue(html, "Эпизоды");
+}
+
+const SCHEDULE_START = "schedule-episodes-table__tbody";
+const SCHEDULE_END = "schedule-episodes__read-more";
+const RELEASED_MARK = "icon-link text-success";
+
+export type LatestEpisode = { number: number; title: string | null };
+
+/**
+ * Последняя вышедшая серия — номер и название — из блока «График выхода
+ * серий» на странице тайтла (та же страница, что уже читает
+ * `fetchAnimegoHtml`, доп. запрос не нужен). Строки идут от новых к
+ * старым; первая с зелёной галочкой (`RELEASED_MARK`) — вышедшая, ещё не
+ * вышедшие показывают вместо неё текст «через N дней». Возвращает `null`,
+ * если разметка блока не найдена (сайт поменялся) — вызывающий код должен
+ * откатиться к номеру серии из поля «Эпизоды» без названия.
+ */
+export function parseLatestEpisode(html: string): LatestEpisode | null {
+  const startAt = html.indexOf(SCHEDULE_START);
+  if (startAt === -1) return null;
+  const endAt = html.indexOf(SCHEDULE_END, startAt);
+  const block = endAt === -1 ? html.slice(startAt) : html.slice(startAt, endAt);
+
+  const rows = block.split(/(?=data-label="\d+\.")/).slice(1);
+  for (const row of rows) {
+    if (!row.includes(RELEASED_MARK)) continue;
+    const numberMatch = row.match(/data-number="(\d+)"/);
+    if (!numberMatch) continue;
+    const titleMatch = row.match(
+      /data-read-more-auto-button-value="false">([\s\S]*?)<\/span>/,
+    );
+    const rawTitle = titleMatch ? stripTags(titleMatch[1]) : "";
+    return {
+      number: Number(numberMatch[1]),
+      title: rawTitle && rawTitle !== "---" ? rawTitle : null,
+    };
+  }
+  return null;
+}
+
+export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
+  const slug = extractAnimegoSlug(url);
+  if (!slug) {
+    throw new Error("Не похоже на ссылку AnimeGO");
+  }
+
+  const pageUrl = animegoUrl(slug);
+  const html = await fetchAnimegoHtml(pageUrl);
 
   const ld = parseJsonLd(html);
 

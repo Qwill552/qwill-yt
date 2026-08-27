@@ -37,9 +37,16 @@ export function animegoUrl(slug: string): string {
   return `https://animego.me/anime/${slug}`;
 }
 
+const ANIMEGO_QUEUE_PREFIX = "animego:";
+
 /** Идентификатор в очереди — с префиксом, чтобы не столкнуться с id ютуба. */
 export function animegoQueueId(slug: string): string {
-  return `animego:${slug}`;
+  return `${ANIMEGO_QUEUE_PREFIX}${slug}`;
+}
+
+/** Обратная операция к `animegoQueueId` — `null`, если id не аниме-карточки. */
+export function slugFromQueueId(id: string): string | null {
+  return id.startsWith(ANIMEGO_QUEUE_PREFIX) ? id.slice(ANIMEGO_QUEUE_PREFIX.length) : null;
 }
 
 /**

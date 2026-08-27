@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
+import { Bell, Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import { Button } from "@/components/ui/button";
 import { availableEpisodes, clampWatched, formatEpisodes } from "@/lib/animego";
@@ -13,6 +13,8 @@ type VideoCardProps = {
   onPriority: (priority: Priority) => void;
   onWatched: (episodes: number) => void;
   onRemove: () => void;
+  subscribed?: boolean;
+  onSubscribeChange?: (subscribed: boolean) => void;
 };
 
 export function VideoCard({
@@ -21,6 +23,8 @@ export function VideoCard({
   onPriority,
   onWatched,
   onRemove,
+  subscribed = false,
+  onSubscribeChange,
 }: VideoCardProps) {
   const [thumb, setThumb] = useState(video.thumbnail);
   const isAnime = video.source === "animego";
@@ -132,11 +136,41 @@ export function VideoCard({
         </div>
 
         <div className="mt-auto flex items-center justify-between gap-2">
-          <PriorityToggle
-            value={video.priority}
-            onChange={onPriority}
-            size="sm"
-          />
+          <div className="flex items-center gap-1.5">
+            <PriorityToggle
+              value={video.priority}
+              onChange={onPriority}
+              size="sm"
+            />
+            {isAnime ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={
+                  subscribed
+                    ? "Отписаться от уведомлений о новых сериях"
+                    : "Подписаться на уведомления о новых сериях"
+                }
+                title={
+                  subscribed
+                    ? "Отписаться от уведомлений о новых сериях"
+                    : "Подписаться на уведомления о новых сериях"
+                }
+                onClick={() => onSubscribeChange?.(!subscribed)}
+                className={cn(
+                  "size-10",
+                  subscribed ? "text-accent hover:text-accent" : "text-subtle hover:text-high",
+                )}
+              >
+                <Bell
+                  className="size-4"
+                  strokeWidth={subscribed ? 2.2 : 1.8}
+                  fill={subscribed ? "currentColor" : "none"}
+                />
+              </Button>
+            ) : null}
+          </div>
           <Button
             type="button"
             variant="ghost"

@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Flame, Circle, Clapperboard } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AddBar } from "@/components/add-bar";
+import { NotificationBell } from "@/components/notification-bell";
 import { TabBar } from "@/components/tab-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/components/theme-provider";
 import { VideoCard } from "@/components/video-card";
+import { useAnimeUpdates } from "@/lib/anime-updates";
 import {
   CATEGORY_META,
   PRIORITY_META,
@@ -66,14 +68,11 @@ export function QueueApp() {
     setReady(true);
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    let cancelled = false;
-
+  const refreshIngestInbox = useCallback(() => {
     fetch("/api/queue-ingest")
       .then((res) => (res.ok ? res.json() : []))
       .then((items: PendingIngestItem[]) => {
-        if (cancelled || !Array.isArray(items) || items.length === 0) return;
+        if (!Array.isArray(items) || items.length === 0) return;
         for (const item of items) {
           const source = item.source ?? "youtube";
           addVideo({
@@ -101,11 +100,18 @@ export function QueueApp() {
       .catch(() => {
         /* best-effort inbox sync — a normal page load must not depend on it */
       });
+  }, [addVideo]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, addVideo]);
+  useEffect(() => {
+    if (!ready) return;
+    refreshIngestInbox();
+    // Дальнейшие приходы почты триггерятся живьём через SSE (см. useAnimeUpdates) —
+    // этот эффект отвечает только за первичную загрузку.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  const { notifications, subscribedIds, markRead, setSubscribed } =
+    useAnimeUpdates(refreshIngestInbox);
 
   const categoryVideos = useMemo(
     () => videos.filter((video) => video.category === category),
@@ -270,25 +276,27 @@ export function QueueApp() {
 
       <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-10 pb-32 sm:px-6 sm:pt-14">
         <header className="flex flex-col gap-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-3">
-              <p className="text-subtle text-xs font-medium uppercase tracking-kicker">
-                Очередь просмотра
-              </p>
-              <h1
-                key={category}
-                className="card-enter font-display text-4xl font-medium tracking-tight text-fg sm:text-5xl"
-              >
-                {CATEGORY_META[category].label}
-              </h1>
-              <p className="max-w-xl text-muted">
-                Вставьте ссылку на YouTube или AnimeGO — появится карточка с
-                названием, каналом или студией, длительностью или числом серий
-                и датой выхода. Сортировка всегда от важного к тому, что можно
-                отложить.
-              </p>
-            </div>
+          <div className="flex items-center justify-between gap-4">
+            <NotificationBell notifications={notifications} onMarkRead={markRead} />
             <ThemeToggle />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <p className="text-subtle text-xs font-medium uppercase tracking-kicker">
+              Очередь просмотра
+            </p>
+            <h1
+              key={category}
+              className="card-enter font-display text-4xl font-medium tracking-tight text-fg sm:text-5xl"
+            >
+              {CATEGORY_META[category].label}
+            </h1>
+            <p className="max-w-xl text-muted">
+              Вставьте ссылку на YouTube или AnimeGO — появится карточка с
+              названием, каналом или студией, длительностью или числом серий
+              и датой выхода. Сортировка всегда от важного к тому, что можно
+              отложить.
+            </p>
           </div>
 
           <AddBar busy={busy} onAdd={handleAdd} />
@@ -377,6 +385,8 @@ export function QueueApp() {
                           patchVideo(video.id, { watchedEpisodes: episodes })
                         }
                         onRemove={() => removeVideo(video.id)}
+                        subscribed={subscribedIds.has(video.id)}
+                        onSubscribeChange={(next) => setSubscribed(video, next)}
                       />
                     ))}
                   </div>

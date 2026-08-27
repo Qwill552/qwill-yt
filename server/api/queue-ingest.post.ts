@@ -5,6 +5,7 @@ import { parseAnimegoDate } from "../../src/lib/animego.functions";
 import { extractVideoId, thumbnailUrl, watchUrl } from "../../src/lib/youtube";
 import { resolveYoutubeMeta } from "../../src/lib/youtube.functions";
 import { enqueuePendingItem } from "../lib/pending-store";
+import { publish } from "../lib/live-bus";
 
 const priority = z.enum(["high", "medium", "low"]);
 
@@ -60,6 +61,7 @@ export default defineHandler(async (event) => {
       addedAt: Date.now(),
     });
 
+    publish({ type: "queue-item" });
     return Response.json({ ok: true, title });
   }
 
@@ -91,5 +93,6 @@ export default defineHandler(async (event) => {
     addedAt: Date.now(),
   });
 
+  publish({ type: "queue-item" });
   return Response.json({ ok: true, title: meta.title });
 });

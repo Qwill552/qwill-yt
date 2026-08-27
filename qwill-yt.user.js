@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qwill YT — отправить в очередь
 // @namespace    qwill-yt.mooo.com
-// @version      1.2
+// @version      1.3
 // @description  Кнопка слева от лайка на YouTube и в шапке AnimeGO — переносит видео в очередь на qwill-yt.mooo.com с выбором приоритета
 // @author       Qwill
 // @match        https://www.youtube.com/*
@@ -948,12 +948,190 @@
     }
   }
 
+  // ===================== Фоновая подстраховка серий =====================
+  // Часть подписанных тайтлов сервер не может перепроверить сам (те же
+  // анонимные 404, что и при добавлении в очередь). Пока открыта любая
+  // страница AnimeGO, скрипт время от времени спрашивает сервер, какие
+  // тайтлы нуждаются в перечитывании в залогиненном браузере, дочитывает их
+  // напрямую (`fetch` на свой же origin — с куками, без CORS) и присылает
+  // уже разобранные поля обратно.
+
+  const RECHECK_INTERVAL_MS = 45000;
+  const RECHECK_QUEUE_URL = API_URL.replace(/\/queue-ingest$/, "/anime-recheck-queue");
+  const RECHECK_RESULT_URL = API_URL.replace(/\/queue-ingest$/, "/anime-recheck-result");
+
+  function agFieldElIn(doc, label) {
+    const labels = doc.querySelectorAll(".text-body-tertiary.text-opacity-75");
+    for (const el of labels) {
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (text === label) return el.nextElementSibling;
+    }
+    return null;
+  }
+
+  function agTextIn(doc, label) {
+    const el = agFieldElIn(doc, label);
+    if (!el) return null;
+    return (el.textContent || "").replace(/\s+/g, " ").trim() || null;
+  }
+
+  function agLinksIn(doc, label) {
+    const el = agFieldElIn(doc, label);
+    if (!el) return null;
+    const names = Array.from(el.querySelectorAll("a"))
+      .map((a) => (a.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (names.length > 0) return names.join(", ");
+    return agTextIn(doc, label);
+  }
+
+  function agJsonLdIn(doc) {
+    const blocks = doc.querySelectorAll('script[type="application/ld+json"]');
+    for (const block of blocks) {
+      try {
+        const data = JSON.parse(block.textContent || "");
+        if (data && (data.name || data.image)) return data;
+      } catch (err) {
+        /* на странице бывает и чужой ld+json */
+      }
+    }
+    return null;
+  }
+
+  function agPosterIn(doc) {
+    const img = doc.querySelector(".entity__poster img");
+    const src = img && (img.getAttribute("src") || img.getAttribute("data-src"));
+    if (src) return src;
+    const meta = doc.querySelector('meta[property="og:image"]');
+    return meta ? meta.getAttribute("content") : null;
+  }
+
+  function agTitleIn(doc) {
+    const el = doc.querySelector(".entity__title h1");
+    const fromEl = el && (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (fromEl) return fromEl;
+    const ld = agJsonLdIn(doc);
+    return (ld && ld.name && ld.name.trim()) || null;
+  }
+
+  /** Последняя вышедшая серия — та же разметка «Графика выхода серий», что парсит сервер. */
+  function agLatestEpisodeIn(doc) {
+    const container = doc.querySelector("[data-schedule-episodes-content]");
+    if (!container) return null;
+    const children = Array.from(container.children);
+    for (let i = 0; i + 3 < children.length; i += 4) {
+      const watchedBlock = children[i + 2];
+      const statusBlock = children[i + 3];
+      if (!statusBlock.querySelector(".text-success")) continue;
+      const number = Number(watchedBlock.getAttribute("data-number"));
+      if (!Number.isFinite(number)) continue;
+      const titleBlock = children[i + 1];
+      const titleEl = titleBlock.querySelector(
+        '[data-read-more-auto-button-value="false"]',
+      );
+      const rawTitle = titleEl ? (titleEl.textContent || "").replace(/\s+/g, " ").trim() : "";
+      return { number: number, title: rawTitle && rawTitle !== "---" ? rawTitle : null };
+    }
+    return null;
+  }
+
+  function agEpisodesAvailable(episodesRaw) {
+    if (!episodesRaw) return null;
+    const match = episodesRaw.match(/\d+/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  function agRecheckPayload(doc, slug) {
+    const title = agTitleIn(doc);
+    if (!title) return null;
+    const ld = agJsonLdIn(doc);
+    const episodesRaw = agTextIn(doc, "Эпизоды");
+    const latest = agLatestEpisodeIn(doc);
+    return {
+      slug: slug,
+      title: title,
+      studio: agLinksIn(doc, "Студия") || "",
+      thumbnail: agPosterIn(doc) || (ld && ld.image) || "",
+      status: agTextIn(doc, "Статус"),
+      episodesRaw: episodesRaw,
+      episodesAvailable: agEpisodesAvailable(episodesRaw),
+      latestEpisodeNumber: latest ? latest.number : null,
+      latestEpisodeTitle: latest ? latest.title : null,
+    };
+  }
+
+  function sendRecheckResult(payload) {
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: RECHECK_RESULT_URL,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + INGEST_TOKEN,
+      },
+      data: JSON.stringify(payload),
+      timeout: 12000,
+      onload: (res) => {
+        console.log(LOG, "recheck-result", payload.slug, res.status);
+      },
+      onerror: () => console.error(LOG, "recheck-result failed", payload.slug),
+      ontimeout: () => console.error(LOG, "recheck-result timeout", payload.slug),
+    });
+  }
+
+  function recheckSlug(slug) {
+    fetch(location.origin + "/anime/" + slug, { credentials: "include" })
+      .then((res) => (res.ok ? res.text() : null))
+      .then((html) => {
+        if (!html) return;
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const payload = agRecheckPayload(doc, slug);
+        if (payload) sendRecheckResult(payload);
+      })
+      .catch((err) => console.error(LOG, "recheck fetch failed", slug, err));
+  }
+
+  let recheckInFlight = false;
+
+  function pollRecheckQueue() {
+    if (recheckInFlight) return;
+    recheckInFlight = true;
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: RECHECK_QUEUE_URL,
+      headers: { Authorization: "Bearer " + INGEST_TOKEN },
+      timeout: 10000,
+      onload: (res) => {
+        recheckInFlight = false;
+        if (res.status !== 200) return;
+        let body;
+        try {
+          body = JSON.parse(res.responseText);
+        } catch {
+          return;
+        }
+        const slugs = Array.isArray(body.slugs) ? body.slugs : [];
+        for (const slug of slugs) recheckSlug(slug);
+      },
+      onerror: () => {
+        recheckInFlight = false;
+      },
+      ontimeout: () => {
+        recheckInFlight = false;
+      },
+    });
+  }
+
   function initAnimego() {
     // Сайт на Turbo: страницы меняются без перезагрузки.
     document.addEventListener("turbo:load", () => agEnsureInjected());
     document.addEventListener("turbo:render", () => agEnsureInjected());
     window.setInterval(agEnsureInjected, 1500);
     agEnsureInjected();
+
+    window.setInterval(pollRecheckQueue, RECHECK_INTERVAL_MS);
+    pollRecheckQueue();
   }
 
   if (IS_ANIMEGO) initAnimego();
