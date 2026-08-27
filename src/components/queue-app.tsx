@@ -257,7 +257,10 @@ export function QueueApp() {
       {ready ? (
         <Toaster
           theme={theme}
-          position="bottom-center"
+          position="bottom-right"
+          // На узких экранах sonner растягивает тост на всю ширину, поэтому
+          // сдвигаем его выше таб-бара (48px кнопка + отступы + safe area).
+          mobileOffset={{ bottom: "6.5rem", left: "1rem", right: "1rem" }}
           toastOptions={{
             className:
               "!bg-surface-2 !text-fg !border-border !shadow-border !font-sans",
