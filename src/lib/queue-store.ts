@@ -4,6 +4,16 @@ import { thumbnailUrl, watchUrl } from "./youtube";
 
 export type Priority = "high" | "medium" | "low";
 
+export type Category = "main" | "background" | "anime";
+
+export const CATEGORIES: Category[] = ["main", "background", "anime"];
+
+export const CATEGORY_META: Record<Category, { label: string }> = {
+  main: { label: "Главная" },
+  background: { label: "На фон" },
+  anime: { label: "Аниме" },
+};
+
 export type QueueVideo = {
   id: string;
   url: string;
@@ -13,6 +23,7 @@ export type QueueVideo = {
   publishedAt: string | null;
   thumbnail: string;
   priority: Priority;
+  category: Category;
   addedAt: number;
 };
 
@@ -41,6 +52,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2005-04-23",
     thumbnail: thumbnailUrl("jNQXAC9IVRw"),
     priority: "high",
+    category: "main",
     addedAt: 6,
   },
   {
@@ -52,6 +64,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2022-01-13",
     thumbnail: thumbnailUrl("DHjqpvDnNGE"),
     priority: "high",
+    category: "main",
     addedAt: 5,
   },
   {
@@ -63,6 +76,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2014-11-10",
     thumbnail: thumbnailUrl("aqz-KE-bpKQ"),
     priority: "medium",
+    category: "main",
     addedAt: 4,
   },
   {
@@ -74,6 +88,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2017-01-12",
     thumbnail: thumbnailUrl("kJQP7kiw5Fk"),
     priority: "medium",
+    category: "main",
     addedAt: 3,
   },
   {
@@ -85,6 +100,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2012-07-15",
     thumbnail: thumbnailUrl("9bZkp7q19f0"),
     priority: "low",
+    category: "main",
     addedAt: 2,
   },
   {
@@ -96,6 +112,7 @@ const SEED: QueueVideo[] = [
     publishedAt: "2009-10-25",
     thumbnail: thumbnailUrl("dQw4w9WgXcQ"),
     priority: "low",
+    category: "main",
     addedAt: 1,
   },
 ];
@@ -134,7 +151,21 @@ export const useQueue = create<QueueState>()(
           ),
         })),
     }),
-    { name: "ochered-queue", skipHydration: true },
+    {
+      name: "ochered-queue",
+      skipHydration: true,
+      version: 1,
+      migrate: (persisted) => {
+        const state = persisted as { videos?: QueueVideo[] };
+        if (state?.videos) {
+          state.videos = state.videos.map((video) => ({
+            ...video,
+            category: video.category ?? "main",
+          }));
+        }
+        return state;
+      },
+    },
   ),
 );
 

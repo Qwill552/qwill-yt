@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Flame, Circle, Clapperboard } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AddBar } from "@/components/add-bar";
+import { TabBar } from "@/components/tab-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/components/theme-provider";
 import { VideoCard } from "@/components/video-card";
 import {
+  CATEGORY_META,
   PRIORITY_META,
+  type Category,
   type Priority,
   type QueueVideo,
   useQueue,
@@ -46,6 +49,7 @@ export function QueueApp() {
   const { theme } = useTheme();
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState<Category>("main");
   const videos = useQueue((state) => state.videos);
   const addVideo = useQueue((state) => state.addVideo);
   const removeVideo = useQueue((state) => state.removeVideo);
@@ -75,6 +79,7 @@ export function QueueApp() {
             publishedAt: item.publishedAt,
             thumbnail: item.thumbnail,
             priority: item.priority,
+            category: "main",
             addedAt: item.addedAt,
           });
         }
@@ -93,20 +98,25 @@ export function QueueApp() {
     };
   }, [ready, addVideo]);
 
+  const categoryVideos = useMemo(
+    () => videos.filter((video) => video.category === category),
+    [videos, category],
+  );
+
   const grouped = useMemo(() => {
     const buckets: Record<Priority, QueueVideo[]> = {
       high: [],
       medium: [],
       low: [],
     };
-    for (const video of videos) {
+    for (const video of categoryVideos) {
       buckets[video.priority].push(video);
     }
     for (const key of SECTIONS) {
       buckets[key].sort((a, b) => b.addedAt - a.addedAt);
     }
     return buckets;
-  }, [videos]);
+  }, [categoryVideos]);
 
   async function handleAdd(url: string, priority: Priority) {
     const videoId = extractVideoId(url);
@@ -145,6 +155,7 @@ export function QueueApp() {
         publishedAt: meta.publishedAt,
         thumbnail: meta.thumbnail,
         priority,
+        category,
         addedAt: Date.now(),
       });
       toast.success("Карточка добавлена");
@@ -197,15 +208,18 @@ export function QueueApp() {
         />
       ) : null}
 
-      <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-10 pb-20 sm:px-6 sm:pt-14">
+      <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-10 pb-32 sm:px-6 sm:pt-14">
         <header className="flex flex-col gap-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-col gap-3">
               <p className="text-subtle text-xs font-medium uppercase tracking-kicker">
                 Очередь просмотра
               </p>
-              <h1 className="font-display text-4xl font-medium tracking-tight text-fg sm:text-5xl">
-                Очередь
+              <h1
+                key={category}
+                className="card-enter font-display text-4xl font-medium tracking-tight text-fg sm:text-5xl"
+              >
+                {CATEGORY_META[category].label}
               </h1>
               <p className="max-w-xl text-muted">
                 Вставьте ссылку на YouTube — появится карточка с названием,
@@ -218,7 +232,7 @@ export function QueueApp() {
 
           <AddBar busy={busy} onAdd={handleAdd} />
 
-          <dl className="grid grid-cols-3 gap-2 sm:gap-3">
+          <dl key={category} className="card-enter grid grid-cols-3 gap-2 sm:gap-3">
             {SECTIONS.map((key) => {
               const Icon = SECTION_ICON[key];
               return (
@@ -257,10 +271,12 @@ export function QueueApp() {
               />
             ))}
           </div>
-        ) : videos.length === 0 ? (
-          <EmptyState />
+        ) : categoryVideos.length === 0 ? (
+          <div key={category} className="card-enter">
+            <EmptyState />
+          </div>
         ) : (
-          <div className="flex flex-col gap-12">
+          <div key={category} className="card-enter flex flex-col gap-12">
             {SECTIONS.map((key) => {
               const items = grouped[key];
               if (items.length === 0) return null;
@@ -306,6 +322,8 @@ export function QueueApp() {
           </div>
         )}
       </main>
+
+      <TabBar active={category} onChange={setCategory} />
     </div>
   );
 }
