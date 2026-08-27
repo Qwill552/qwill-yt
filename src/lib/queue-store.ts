@@ -25,6 +25,8 @@ export type QueueVideo = {
   durationSeconds: number | null;
   /** количество серий для аниме: «19 / 24», «52» */
   episodes: string | null;
+  /** сколько серий уже просмотрено — правится прямо в карточке */
+  watchedEpisodes: number;
   publishedAt: string | null;
   thumbnail: string;
   source: QueueSource;
@@ -56,6 +58,7 @@ const SEED: QueueVideo[] = [
     channel: "jawed",
     durationSeconds: 19,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2005-04-23",
     thumbnail: thumbnailUrl("jNQXAC9IVRw"),
     source: "youtube",
@@ -70,6 +73,7 @@ const SEED: QueueVideo[] = [
     channel: "Fireship",
     durationSeconds: 148,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2022-01-13",
     thumbnail: thumbnailUrl("DHjqpvDnNGE"),
     source: "youtube",
@@ -84,6 +88,7 @@ const SEED: QueueVideo[] = [
     channel: "Blender",
     durationSeconds: 635,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2014-11-10",
     thumbnail: thumbnailUrl("aqz-KE-bpKQ"),
     source: "youtube",
@@ -98,6 +103,7 @@ const SEED: QueueVideo[] = [
     channel: "LuisFonsiVEVO",
     durationSeconds: 282,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2017-01-12",
     thumbnail: thumbnailUrl("kJQP7kiw5Fk"),
     source: "youtube",
@@ -112,6 +118,7 @@ const SEED: QueueVideo[] = [
     channel: "officialpsy",
     durationSeconds: 252,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2012-07-15",
     thumbnail: thumbnailUrl("9bZkp7q19f0"),
     source: "youtube",
@@ -126,6 +133,7 @@ const SEED: QueueVideo[] = [
     channel: "Rick Astley",
     durationSeconds: 213,
     episodes: null,
+    watchedEpisodes: 0,
     publishedAt: "2009-10-25",
     thumbnail: thumbnailUrl("dQw4w9WgXcQ"),
     source: "youtube",
@@ -172,7 +180,7 @@ export const useQueue = create<QueueState>()(
     {
       name: "ochered-queue",
       skipHydration: true,
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const state = persisted as { videos?: QueueVideo[] };
         if (state?.videos) {
@@ -181,6 +189,7 @@ export const useQueue = create<QueueState>()(
             category: video.category ?? "main",
             source: video.source ?? "youtube",
             episodes: video.episodes ?? null,
+            watchedEpisodes: video.watchedEpisodes ?? 0,
           }));
         }
         return state;

@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import { Button } from "@/components/ui/button";
-import { formatEpisodes } from "@/lib/animego";
+import { availableEpisodes, clampWatched, formatEpisodes } from "@/lib/animego";
 import type { Priority, QueueVideo } from "@/lib/queue-store";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatPublishedAt, thumbnailUrl } from "@/lib/youtube";
@@ -11,6 +11,7 @@ type VideoCardProps = {
   video: QueueVideo;
   index: number;
   onPriority: (priority: Priority) => void;
+  onWatched: (episodes: number) => void;
   onRemove: () => void;
 };
 
@@ -18,12 +19,15 @@ export function VideoCard({
   video,
   index,
   onPriority,
+  onWatched,
   onRemove,
 }: VideoCardProps) {
   const [thumb, setThumb] = useState(video.thumbnail);
   const isAnime = video.source === "animego";
   const duration = formatDuration(video.durationSeconds);
-  const episodes = formatEpisodes(video.episodes);
+  const available = availableEpisodes(video.episodes);
+  const watched = clampWatched(video.watchedEpisodes, available);
+  const episodes = formatEpisodes(video.episodes, watched);
   const badge = isAnime ? episodes : duration;
   const published = formatPublishedAt(video.publishedAt);
 
@@ -105,14 +109,23 @@ export function VideoCard({
                 </time>
               </span>
             ) : null}
-            {badge ? (
-              <span className="inline-flex items-center gap-1 text-subtle sm:hidden">
-                {isAnime ? (
+            {isAnime ? (
+              available != null ? (
+                <EpisodesEditor
+                  watched={watched}
+                  available={available}
+                  onChange={onWatched}
+                />
+              ) : episodes ? (
+                <span className="inline-flex items-center gap-1 text-subtle">
                   <Tv className="size-3.5" strokeWidth={1.75} />
-                ) : (
-                  <Clock className="size-3.5" strokeWidth={1.75} />
-                )}
-                <span className="tabular-nums">{badge}</span>
+                  <span className="tabular-nums">{episodes}</span>
+                </span>
+              ) : null
+            ) : duration ? (
+              <span className="inline-flex items-center gap-1 text-subtle sm:hidden">
+                <Clock className="size-3.5" strokeWidth={1.75} />
+                <span className="tabular-nums">{duration}</span>
               </span>
             ) : null}
           </p>
@@ -138,5 +151,81 @@ export function VideoCard({
         </div>
       </div>
     </article>
+  );
+}
+
+type EpisodesEditorProps = {
+  watched: number;
+  available: number;
+  onChange: (episodes: number) => void;
+};
+
+/** Клик по счётчику серий превращает его в поле ввода: «сколько просмотрено». */
+function EpisodesEditor({ watched, available, onChange }: EpisodesEditorProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  function commit() {
+    setEditing(false);
+    if (draft === "") return;
+    const parsed = Number.parseInt(draft, 10);
+    if (!Number.isFinite(parsed)) return;
+    const next = Math.min(Math.max(parsed, 0), available);
+    if (next !== watched) onChange(next);
+  }
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1 text-subtle">
+        <Tv className="size-3.5" strokeWidth={1.75} />
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          value={draft}
+          onChange={(event) =>
+            setDraft(event.target.value.replace(/\D/g, "").slice(0, 4))
+          }
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setEditing(false);
+            }
+          }}
+          aria-label="Сколько серий просмотрено"
+          className="w-9 rounded-xs bg-bg/60 px-1 py-0.5 text-center text-fg tabular-nums outline outline-1 outline-accent/60 focus-visible:outline-accent"
+        />
+        <span className="tabular-nums">/{available} эп.</span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(String(watched));
+        setEditing(true);
+      }}
+      title="Указать, сколько серий просмотрено"
+      className="inline-flex items-center gap-1 rounded-xs text-subtle transition-colors duration-150 hover:text-accent focus-visible:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+    >
+      <Tv className="size-3.5" strokeWidth={1.75} />
+      <span className="tabular-nums">
+        {watched}/{available} эп.
+      </span>
+    </button>
   );
 }

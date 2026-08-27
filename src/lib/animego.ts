@@ -42,9 +42,40 @@ export function animegoQueueId(slug: string): string {
   return `animego:${slug}`;
 }
 
-export function formatEpisodes(episodes: string | null | undefined): string | null {
+/**
+ * На animego эпизоды пишутся как «19 / 24» (вышло / запланировано),
+ * «8 / ?» (онгоинг) или «52» (завершён). Нас интересует первое число —
+ * сколько серий уже доступно к просмотру.
+ */
+export function availableEpisodes(
+  episodes: string | null | undefined,
+): number | null {
   if (!episodes) return null;
-  const clean = episodes.replace(/\s+/g, " ").trim();
-  if (!clean) return null;
-  return `${clean} эп.`;
+  const match = episodes.match(/\d+/);
+  if (!match) return null;
+  const value = Number(match[0]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** «0/12 эп.» — просмотрено из доступных. */
+export function formatEpisodes(
+  episodes: string | null | undefined,
+  watched: number | null | undefined = 0,
+): string | null {
+  const available = availableEpisodes(episodes);
+  if (available == null) {
+    const clean = episodes?.replace(/\s+/g, " ").trim();
+    return clean ? `${clean} эп.` : null;
+  }
+  return `${clampWatched(watched, available)}/${available} эп.`;
+}
+
+export function clampWatched(
+  watched: number | null | undefined,
+  available: number | null,
+): number {
+  const value = Math.trunc(Number(watched));
+  if (!Number.isFinite(value) || value < 0) return 0;
+  const max = available ?? 9999;
+  return Math.min(value, max);
 }

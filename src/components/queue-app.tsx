@@ -79,6 +79,7 @@ export function QueueApp() {
             channel: item.channel,
             durationSeconds: item.durationSeconds,
             episodes: null,
+            watchedEpisodes: 0,
             publishedAt: item.publishedAt,
             thumbnail: item.thumbnail,
             source: "youtube",
@@ -139,6 +140,7 @@ export function QueueApp() {
         channel: meta.studio,
         durationSeconds: null,
         episodes: meta.episodes,
+        watchedEpisodes: 0,
         publishedAt: meta.publishedAt,
         thumbnail: meta.thumbnail,
         source: "animego",
@@ -201,6 +203,7 @@ export function QueueApp() {
         channel: meta.channel,
         durationSeconds: meta.durationSeconds,
         episodes: null,
+        watchedEpisodes: 0,
         publishedAt: meta.publishedAt,
         thumbnail: meta.thumbnail,
         source: "youtube",
@@ -362,6 +365,9 @@ export function QueueApp() {
                         index={index}
                         onPriority={(priority) =>
                           setPriority(video.id, priority)
+                        }
+                        onWatched={(episodes) =>
+                          patchVideo(video.id, { watchedEpisodes: episodes })
                         }
                         onRemove={() => removeVideo(video.id)}
                       />
