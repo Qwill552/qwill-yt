@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Calendar, Clock, Play, Trash2 } from "lucide-react";
+import { Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import { Button } from "@/components/ui/button";
+import { formatEpisodes } from "@/lib/animego";
 import type { Priority, QueueVideo } from "@/lib/queue-store";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatPublishedAt, thumbnailUrl } from "@/lib/youtube";
@@ -20,7 +21,10 @@ export function VideoCard({
   onRemove,
 }: VideoCardProps) {
   const [thumb, setThumb] = useState(video.thumbnail);
+  const isAnime = video.source === "animego";
   const duration = formatDuration(video.durationSeconds);
+  const episodes = formatEpisodes(video.episodes);
+  const badge = isAnime ? episodes : duration;
   const published = formatPublishedAt(video.publishedAt);
 
   return (
@@ -33,18 +37,34 @@ export function VideoCard({
         target="_blank"
         rel="noopener noreferrer"
         className="press-thumb group relative block overflow-hidden rounded-lg focus-visible:ring-2 focus-visible:ring-accent/50"
-        aria-label={`Открыть «${video.title}» на YouTube`}
+        aria-label={`Открыть «${video.title}» на ${isAnime ? "AnimeGO" : "YouTube"}`}
       >
-        <img
-          src={thumb}
-          alt=""
-          width={1280}
-          height={720}
-          loading="lazy"
-          decoding="async"
-          onError={() => setThumb(thumbnailUrl(video.id, "hq"))}
-          className="aspect-video w-full object-cover outline outline-1 -outline-offset-1 outline-fg/10"
-        />
+        {thumb ? (
+          <img
+            src={thumb}
+            alt=""
+            width={isAnime ? 700 : 1280}
+            height={isAnime ? 980 : 720}
+            loading="lazy"
+            decoding="async"
+            onError={
+              isAnime ? undefined : () => setThumb(thumbnailUrl(video.id, "hq"))
+            }
+            className={cn(
+              "w-full object-cover outline outline-1 -outline-offset-1 outline-fg/10",
+              isAnime ? "aspect-[5/7]" : "aspect-video",
+            )}
+          />
+        ) : (
+          <div
+            className={cn(
+              "flex w-full items-center justify-center bg-surface-2 outline outline-1 -outline-offset-1 outline-fg/10",
+              isAnime ? "aspect-[5/7]" : "aspect-video",
+            )}
+          >
+            <Tv className="size-8 text-subtle" strokeWidth={1.5} />
+          </div>
+        )}
         <span className="pointer-events-none absolute inset-0 bg-linear-to-t from-bg/70 via-transparent to-transparent opacity-80" />
         <span
           className={cn(
@@ -56,9 +76,9 @@ export function VideoCard({
             <Play className="ml-0.5 size-5 fill-current" strokeWidth={0} />
           </span>
         </span>
-        {duration ? (
+        {badge ? (
           <span className="absolute right-2 bottom-2 rounded-xs bg-bg/88 px-1.5 py-0.5 font-medium text-fg text-xs tabular-nums shadow-border">
-            {duration}
+            {badge}
           </span>
         ) : null}
       </a>
@@ -85,10 +105,14 @@ export function VideoCard({
                 </time>
               </span>
             ) : null}
-            {duration ? (
+            {badge ? (
               <span className="inline-flex items-center gap-1 text-subtle sm:hidden">
-                <Clock className="size-3.5" strokeWidth={1.75} />
-                <span className="tabular-nums">{duration}</span>
+                {isAnime ? (
+                  <Tv className="size-3.5" strokeWidth={1.75} />
+                ) : (
+                  <Clock className="size-3.5" strokeWidth={1.75} />
+                )}
+                <span className="tabular-nums">{badge}</span>
               </span>
             ) : null}
           </p>

@@ -14,14 +14,20 @@ export const CATEGORY_META: Record<Category, { label: string }> = {
   anime: { label: "Аниме" },
 };
 
+export type QueueSource = "youtube" | "animego";
+
 export type QueueVideo = {
   id: string;
   url: string;
   title: string;
+  /** канал YouTube или студия-аниматор */
   channel: string;
   durationSeconds: number | null;
+  /** количество серий для аниме: «19 / 24», «52» */
+  episodes: string | null;
   publishedAt: string | null;
   thumbnail: string;
+  source: QueueSource;
   priority: Priority;
   category: Category;
   addedAt: number;
@@ -49,8 +55,10 @@ const SEED: QueueVideo[] = [
     title: "Me at the zoo",
     channel: "jawed",
     durationSeconds: 19,
+    episodes: null,
     publishedAt: "2005-04-23",
     thumbnail: thumbnailUrl("jNQXAC9IVRw"),
+    source: "youtube",
     priority: "high",
     category: "main",
     addedAt: 6,
@@ -61,8 +69,10 @@ const SEED: QueueVideo[] = [
     title: "JavaScript in 100 Seconds",
     channel: "Fireship",
     durationSeconds: 148,
+    episodes: null,
     publishedAt: "2022-01-13",
     thumbnail: thumbnailUrl("DHjqpvDnNGE"),
+    source: "youtube",
     priority: "high",
     category: "main",
     addedAt: 5,
@@ -73,8 +83,10 @@ const SEED: QueueVideo[] = [
     title: "Big Buck Bunny 60fps 4K — Official Blender Foundation Short Film",
     channel: "Blender",
     durationSeconds: 635,
+    episodes: null,
     publishedAt: "2014-11-10",
     thumbnail: thumbnailUrl("aqz-KE-bpKQ"),
+    source: "youtube",
     priority: "medium",
     category: "main",
     addedAt: 4,
@@ -85,8 +97,10 @@ const SEED: QueueVideo[] = [
     title: "Luis Fonsi — Despacito ft. Daddy Yankee",
     channel: "LuisFonsiVEVO",
     durationSeconds: 282,
+    episodes: null,
     publishedAt: "2017-01-12",
     thumbnail: thumbnailUrl("kJQP7kiw5Fk"),
+    source: "youtube",
     priority: "medium",
     category: "main",
     addedAt: 3,
@@ -97,8 +111,10 @@ const SEED: QueueVideo[] = [
     title: "PSY — GANGNAM STYLE M/V",
     channel: "officialpsy",
     durationSeconds: 252,
+    episodes: null,
     publishedAt: "2012-07-15",
     thumbnail: thumbnailUrl("9bZkp7q19f0"),
+    source: "youtube",
     priority: "low",
     category: "main",
     addedAt: 2,
@@ -109,8 +125,10 @@ const SEED: QueueVideo[] = [
     title: "Rick Astley — Never Gonna Give You Up (Official Video) (4K Remaster)",
     channel: "Rick Astley",
     durationSeconds: 213,
+    episodes: null,
     publishedAt: "2009-10-25",
     thumbnail: thumbnailUrl("dQw4w9WgXcQ"),
+    source: "youtube",
     priority: "low",
     category: "main",
     addedAt: 1,
@@ -154,13 +172,15 @@ export const useQueue = create<QueueState>()(
     {
       name: "ochered-queue",
       skipHydration: true,
-      version: 1,
+      version: 2,
       migrate: (persisted) => {
         const state = persisted as { videos?: QueueVideo[] };
         if (state?.videos) {
           state.videos = state.videos.map((video) => ({
             ...video,
             category: video.category ?? "main",
+            source: video.source ?? "youtube",
+            episodes: video.episodes ?? null,
           }));
         }
         return state;

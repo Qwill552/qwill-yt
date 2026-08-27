@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PriorityToggle } from "@/components/priority-toggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { isAnimegoUrl } from "@/lib/animego";
 import type { Priority } from "@/lib/queue-store";
 import { extractVideoId } from "@/lib/youtube";
 
@@ -11,6 +12,10 @@ type AddBarProps = {
   busy: boolean;
   onAdd: (url: string, priority: Priority) => Promise<void>;
 };
+
+function isSupportedLink(value: string): boolean {
+  return extractVideoId(value) !== null || isAnimegoUrl(value);
+}
 
 export function AddBar({ busy, onAdd }: AddBarProps) {
   const [url, setUrl] = useState("");
@@ -43,7 +48,7 @@ export function AddBar({ busy, onAdd }: AddBarProps) {
         return;
       }
       setUrl(pasted);
-      if (extractVideoId(pasted)) {
+      if (isSupportedLink(pasted)) {
         await submit(pasted);
       }
     } catch {
@@ -79,17 +84,17 @@ export function AddBar({ busy, onAdd }: AddBarProps) {
             onChange={(event) => setUrl(event.target.value)}
             onPaste={(event) => {
               const pasted = event.clipboardData.getData("text");
-              if (extractVideoId(pasted)) {
+              if (isSupportedLink(pasted)) {
                 event.preventDefault();
                 setUrl(pasted);
                 void submit(pasted);
               }
             }}
-            placeholder="Вставьте ссылку на YouTube"
+            placeholder="Ссылка на YouTube или AnimeGO"
             inputMode="url"
             autoComplete="off"
             spellCheck={false}
-            aria-label="Ссылка на YouTube"
+            aria-label="Ссылка на YouTube или AnimeGO"
             disabled={busy}
             className="h-12 flex-1 rounded-md bg-bg/60 pl-12"
           />

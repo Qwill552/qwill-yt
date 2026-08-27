@@ -24,6 +24,8 @@ import {
   thumbnailUrl,
   watchUrl,
 } from "@/lib/youtube";
+import { animegoQueueId, extractAnimegoSlug } from "@/lib/animego";
+import { fetchAnimegoMeta } from "@/lib/animego.functions";
 
 type PendingIngestItem = {
   videoId: string;
@@ -76,8 +78,10 @@ export function QueueApp() {
             title: item.title,
             channel: item.channel,
             durationSeconds: item.durationSeconds,
+            episodes: null,
             publishedAt: item.publishedAt,
             thumbnail: item.thumbnail,
+            source: "youtube",
             priority: item.priority,
             category: "main",
             addedAt: item.addedAt,
@@ -118,10 +122,54 @@ export function QueueApp() {
     return buckets;
   }, [categoryVideos]);
 
+  async function handleAddAnime(slug: string, url: string, priority: Priority) {
+    const id = animegoQueueId(slug);
+    if (videos.some((item) => item.id === id)) {
+      toast("Это аниме уже в очереди");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const meta = await fetchAnimegoMeta({ data: { url } });
+      addVideo({
+        id,
+        url: meta.url,
+        title: meta.title,
+        channel: meta.studio,
+        durationSeconds: null,
+        episodes: meta.episodes,
+        publishedAt: meta.publishedAt,
+        thumbnail: meta.thumbnail,
+        source: "animego",
+        priority,
+        category: "anime",
+        addedAt: Date.now(),
+      });
+      toast.success(
+        category === "anime"
+          ? "Карточка добавлена"
+          : "Аниме добавлено в раздел «Аниме»",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Не удалось добавить аниме",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleAdd(url: string, priority: Priority) {
+    const animegoSlug = extractAnimegoSlug(url);
+    if (animegoSlug) {
+      await handleAddAnime(animegoSlug, url, priority);
+      return;
+    }
+
     const videoId = extractVideoId(url);
     if (!videoId) {
-      toast.error("Не похоже на ссылку YouTube");
+      toast.error("Не похоже на ссылку YouTube или AnimeGO");
       return;
     }
     if (videos.some((item) => item.id === videoId)) {
@@ -152,8 +200,10 @@ export function QueueApp() {
         title: meta.title,
         channel: meta.channel,
         durationSeconds: meta.durationSeconds,
+        episodes: null,
         publishedAt: meta.publishedAt,
         thumbnail: meta.thumbnail,
+        source: "youtube",
         priority,
         category,
         addedAt: Date.now(),
@@ -222,9 +272,10 @@ export function QueueApp() {
                 {CATEGORY_META[category].label}
               </h1>
               <p className="max-w-xl text-muted">
-                Вставьте ссылку на YouTube — появится карточка с названием,
-                каналом, длительностью и датой. Сортировка всегда от важного к
-                тому, что можно отложить.
+                Вставьте ссылку на YouTube или AnimeGO — появится карточка с
+                названием, каналом или студией, длительностью или числом серий
+                и датой выхода. Сортировка всегда от важного к тому, что можно
+                отложить.
               </p>
             </div>
             <ThemeToggle />
