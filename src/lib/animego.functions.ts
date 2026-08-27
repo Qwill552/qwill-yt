@@ -194,10 +194,13 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
   } catch {
     throw new Error("AnimeGO не отвечает");
   }
+  if (res.status === 404) {
+    // Часть тайтлов AnimeGO не отдаёт анонимным запросам: в браузере с
+    // залогиненной сессией страница открывается, а серверу прилетает 404.
+    throw new Error("AnimeGO отвечает 404 — сервер не может прочитать страницу");
+  }
   if (!res.ok) {
-    throw new Error(
-      res.status === 404 ? "Аниме не найдено на AnimeGO" : "AnimeGO не отвечает",
-    );
+    throw new Error("AnimeGO не отвечает");
   }
 
   const html = await res.text().catch(() => "");
