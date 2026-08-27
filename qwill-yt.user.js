@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Qwill YT — отправить в очередь
 // @namespace    qwill-yt.mooo.com
-// @version      1.1
-// @description  Кнопка слева от лайка на YouTube и на странице аниме AnimeGO — переносит видео в очередь на qwill-yt.mooo.com с выбором приоритета
+// @version      1.2
+// @description  Кнопка слева от лайка на YouTube и в шапке AnimeGO — переносит видео в очередь на qwill-yt.mooo.com с выбором приоритета
 // @author       Qwill
 // @match        https://www.youtube.com/*
 // @match        https://animego.me/*
@@ -308,6 +308,7 @@
     return id ? "https://www.youtube.com/watch?v=" + id : location.href;
   }
 
+  /** done(ok, reason) — reason человекочитаемо объясняет отказ сервера. */
   function sendPayload(payload, done) {
     GM_xmlhttpRequest({
       method: "POST",
@@ -318,10 +319,29 @@
       },
       data: JSON.stringify(payload),
       timeout: 12000,
-      onload: (res) => done(res.status >= 200 && res.status < 300),
-      onerror: () => done(false),
-      ontimeout: () => done(false),
+      onload: (res) => {
+        const ok = res.status >= 200 && res.status < 300;
+        const body = (res.responseText || "").slice(0, 200);
+        console.log(LOG, "ingest", res.status, body);
+        done(ok, ok ? "" : describeError(res.status, body));
+      },
+      onerror: (err) => {
+        console.error(LOG, "ingest failed", err);
+        done(false, "нет связи с сервером");
+      },
+      ontimeout: () => {
+        console.error(LOG, "ingest timeout");
+        done(false, "сервер не ответил");
+      },
     });
+  }
+
+  function describeError(status, body) {
+    if (status === 401) return "401 — проверьте INGEST_TOKEN в скрипте";
+    if (status === 0) return "нет связи с сервером";
+    const text = body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    if (text && text.length < 80) return status + " — " + text;
+    return "ошибка " + status;
   }
 
   function sendVideo(url, priority, done) {
@@ -685,15 +705,25 @@
   // залогиненной сессией, и отправляем на сервер уже готовой.
 
   const AG_PRIORITIES = [
-    { priority: "high", label: "Важно", cls: "btn-danger", icon: ICONS.flame },
+    {
+      priority: "high",
+      label: "Важно — смотреть сейчас",
+      text: "text-danger",
+      icon: ICONS.flame,
+    },
     {
       priority: "medium",
-      label: "Средне",
-      cls: "btn-warning",
+      label: "Средне — когда будет время",
+      text: "text-warning",
       icon: ICONS.circle,
       fill: true,
     },
-    { priority: "low", label: "Позже", cls: "btn-secondary", icon: ICONS.circle },
+    {
+      priority: "low",
+      label: "Позже — можно отложить",
+      text: "text-secondary",
+      icon: ICONS.circle,
+    },
   ];
 
   function agTitleEl() {
@@ -775,134 +805,146 @@
     if (document.getElementById("qwyt-ag-style")) return;
     const style = document.createElement("style");
     style.id = "qwyt-ag-style";
+    // Своё правило показа меню: у бутстраповских d-* утилит стоит !important,
+    // и инлайновый display их не перебивает.
     style.textContent =
-      ".qwyt-ag-card svg{width:1.1em;height:1.1em;flex-shrink:0;}" +
-      ".qwyt-ag-card .qwyt-ag-choose button{justify-content:center;}";
+      ".qwyt-ag-menu{display:none;position:absolute;top:100%;right:0;left:auto;" +
+      "z-index:1080;min-width:220px;}" +
+      ".qwyt-ag-menu.qwyt-ag-open{display:block;}" +
+      ".qwyt-ag-toggle{background:none;cursor:pointer;}" +
+      ".qwyt-ag-toggle svg,.qwyt-ag-menu svg{width:1.15em;height:1.15em;flex-shrink:0;}";
     document.head.appendChild(style);
   }
 
-  function agBuildCard() {
-    const card = document.createElement("div");
-    card.className = "card mb-0 qwyt-ag-card";
+  /** Правый блок иконок в шапке — и в десктопной, и в мобильной версиях. */
+  function agNavbarSlots() {
+    const slots = [];
+    document.querySelectorAll(".header-navbar").forEach((nav) => {
+      const target =
+        nav.querySelector(".navbar-nav.justify-content-end") ||
+        nav.querySelector(".header-navbar-nav.justify-content-end") ||
+        Array.from(nav.querySelectorAll(".navbar-nav")).pop();
+      if (target) slots.push(target);
+    });
+    return slots;
+  }
 
-    const body = document.createElement("div");
-    body.className = "card-body p-3";
+  function agBuildNavItem() {
+    const item = document.createElement("div");
+    item.className = "nav-item position-relative qwyt-ag-mount";
 
-    const caption = document.createElement("div");
-    caption.className = "small text-body-tertiary mb-2";
-    caption.textContent = "Очередь Qwill";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className =
+      "nav-link d-inline-flex icon-link gap-2 btn border-0 qwyt-ag-toggle";
+    toggle.title = "Отправить в очередь Qwill";
+    toggle.setAttribute("aria-label", "Отправить в очередь Qwill");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.appendChild(svgEl(ICONS.link));
 
-    const idle = document.createElement("div");
-    idle.className = "d-grid";
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "btn btn-primary icon-link justify-content-center gap-2";
-    openBtn.appendChild(svgEl(ICONS.link));
-    openBtn.appendChild(document.createTextNode("В очередь"));
-    idle.appendChild(openBtn);
+    const menu = document.createElement("div");
+    menu.className = "dropdown-menu qwyt-ag-menu";
 
-    const choose = document.createElement("div");
-    choose.className = "d-grid gap-2 qwyt-ag-choose";
-    choose.style.display = "none";
+    const header = document.createElement("h6");
+    header.className = "dropdown-header";
+    header.textContent = "Очередь Qwill";
 
     const status = document.createElement("div");
-    status.className = "small";
+    status.className = "px-3 pt-1 pb-2 small";
     status.style.display = "none";
 
-    body.append(caption, idle, choose, status);
-    card.appendChild(body);
+    menu.appendChild(header);
 
     let resetTimer = null;
 
-    function setState(state) {
-      idle.style.display = state === "idle" ? "" : "none";
-      choose.style.display = state === "choose" ? "" : "none";
-      status.style.display = state === "status" ? "" : "none";
+    function setOpen(open) {
+      menu.classList.toggle("qwyt-ag-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
     }
 
-    function showStatus(ok, text) {
-      status.className = "small " + (ok ? "text-success" : "text-danger");
+    function setStatus(text, cls) {
+      status.className = "px-3 pt-1 pb-2 small " + cls;
       status.textContent = text;
-      setState("status");
-      window.clearTimeout(resetTimer);
-      resetTimer = window.setTimeout(
-        () => setState("idle"),
-        ok ? SUCCESS_MS : ERROR_MS,
-      );
+      status.style.display = text ? "" : "none";
     }
 
-    openBtn.addEventListener("click", (event) => {
+    toggle.addEventListener("click", (event) => {
       event.preventDefault();
+      event.stopPropagation();
       window.clearTimeout(resetTimer);
-      setState("choose");
+      setStatus("", "");
+      setOpen(!menu.classList.contains("qwyt-ag-open"));
     });
 
-    for (const item of AG_PRIORITIES) {
+    for (const entry of AG_PRIORITIES) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "btn btn-sm icon-link gap-2 " + item.cls;
-      btn.appendChild(svgEl(item.icon, item.fill ? { fill: "currentColor" } : undefined));
-      btn.appendChild(document.createTextNode(item.label));
+      btn.className = "dropdown-item d-flex align-items-center gap-2";
+
+      const icon = document.createElement("span");
+      icon.className = "d-inline-flex " + entry.text;
+      icon.appendChild(
+        svgEl(entry.icon, entry.fill ? { fill: "currentColor" } : undefined),
+      );
+
+      btn.append(icon, document.createTextNode(entry.label));
       btn.addEventListener("click", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+
         const payload = agCollect();
         if (!payload) {
-          showStatus(false, "Не удалось прочитать страницу");
+          setStatus("Не удалось прочитать страницу", "text-danger");
           return;
         }
-        payload.priority = item.priority;
-        status.className = "small text-body-tertiary";
-        status.textContent = "Отправляю…";
-        setState("status");
-        sendPayload(payload, (ok) => {
-          showStatus(ok, ok ? "Добавлено в очередь" : "Не удалось отправить");
+        payload.priority = entry.priority;
+        setStatus("Отправляю…", "text-body-tertiary");
+
+        sendPayload(payload, (ok, reason) => {
+          if (ok) {
+            setStatus("Добавлено в очередь", "text-success");
+            window.clearTimeout(resetTimer);
+            resetTimer = window.setTimeout(() => {
+              setOpen(false);
+              setStatus("", "");
+            }, SUCCESS_MS);
+          } else {
+            setStatus("Не отправилось: " + reason, "text-danger");
+          }
         });
       });
-      choose.appendChild(btn);
+
+      menu.appendChild(btn);
     }
 
+    menu.appendChild(status);
+    item.append(toggle, menu);
+
     function onOutsideClick(event) {
-      // Turbo пересобирает страницу — снимаем слушатель вместе с карточкой.
-      if (!card.isConnected) {
+      // Turbo пересобирает страницу — снимаем слушатель вместе с кнопкой.
+      if (!item.isConnected) {
         document.removeEventListener("click", onOutsideClick, true);
         return;
       }
-      if (choose.style.display === "none") return;
-      if (!card.contains(event.target)) setState("idle");
+      if (!menu.classList.contains("qwyt-ag-open")) return;
+      if (!item.contains(event.target)) setOpen(false);
     }
     document.addEventListener("click", onOutsideClick, true);
 
-    return card;
+    return item;
   }
 
   function agEnsureInjected() {
-    const titleBlock = document.querySelector(".entity__title");
-    if (!titleBlock || !agTitleEl()) {
+    if (!agTitleEl()) {
       document.querySelectorAll(".qwyt-ag-mount").forEach((el) => el.remove());
       return;
     }
 
     agInjectStyle();
 
-    // Правая колонка страницы — там, где на широком экране пустое место.
-    const row = document.querySelector(".content-page .container-xxl > .d-flex");
-    if (row && !document.getElementById("qwyt-ag-side")) {
-      const side = document.createElement("div");
-      side.id = "qwyt-ag-side";
-      side.className = "qwyt-ag-mount d-none d-xl-block";
-      side.style.flex = "0 0 240px";
-      side.style.maxWidth = "240px";
-      side.appendChild(agBuildCard());
-      row.appendChild(side);
-    }
-
-    // На узких экранах правой колонки нет — кладём карточку над заголовком.
-    if (titleBlock.parentElement && !document.getElementById("qwyt-ag-inline")) {
-      const inline = document.createElement("div");
-      inline.id = "qwyt-ag-inline";
-      inline.className = "qwyt-ag-mount d-xl-none mb-3";
-      inline.appendChild(agBuildCard());
-      titleBlock.parentElement.insertBefore(inline, titleBlock);
+    for (const slot of agNavbarSlots()) {
+      if (slot.querySelector(".qwyt-ag-mount")) continue;
+      slot.appendChild(agBuildNavItem());
     }
   }
 
