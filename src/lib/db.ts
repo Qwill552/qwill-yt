@@ -1,3 +1,4 @@
+import type { Pool as PgPool } from "pg";
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 
 /** Which database backend is active. */
@@ -85,6 +86,54 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
+/**
+ * Apply `migrations/*.sql` to the Postgres the RUNNING process is connected to.
+ *
+ * `scripts/migrate.mjs` also applies them at build time, but only when the BUILD
+ * environment carries `DATABASE_URL` — and a build run over SSH does not inherit
+ * the systemd unit's `Environment=` (see .github/workflows/deploy.yml), so it
+ * quietly skips and the server ends up querying tables nobody created. Doing it
+ * here, on the very connection the queries use, makes that divergence impossible.
+ *
+ * Same contract as the PGLite path: SQL inlined by the bundler (no runtime fs —
+ * the deployed function cannot read migrations/), applied once each inside a
+ * transaction, tracked by basename in `_migrations`.
+ */
+async function migratePg(pool: PgPool): Promise<void> {
+  const migrations = import.meta.glob("/migrations/*.sql", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  const client = await pool.connect();
+  try {
+    await client.query(
+      "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",
+    );
+    const done = (
+      await client.query<{ name: string }>("select name from _migrations")
+    ).rows.map((row) => row.name);
+
+    for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
+      try {
+        await client.query("begin");
+        // Simple-query protocol: a whole multi-statement file in one round trip.
+        await client.query(migrations[path]);
+        await client.query("insert into _migrations (name) values ($1)", [name]);
+        await client.query("commit");
+      } catch (err) {
+        // ROLLBACK fails when the connection died — keep the original error.
+        await client.query("rollback").catch(() => undefined);
+        throw err;
+      }
+      console.log(`[db] applied migration ${name}`);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 function createNeonSql(): Promise<Sql> {
   globalRef.__pgSqlPromise__ ??= (async () => {
     // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
@@ -94,6 +143,9 @@ function createNeonSql(): Promise<Sql> {
     types.setTypeParser(OID_DATE, identity);
     types.setTypeParser(OID_INTERVAL, identity);
     const pool = new Pool({ connectionString: databaseUrl });
+    // Before the first query resolves — the memoized promise serializes every
+    // caller behind it, so no query can reach a not-yet-migrated schema.
+    await migratePg(pool);
     return toSql(async <T>(text: string, params: unknown[]) => {
       const res = await pool.query(text, params);
       return res.rows as T[];
@@ -210,17 +262,14 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
 }
 
 /**
- * Finish DB bootstrap before the server handles traffic.
- *
- * - **PGLite** (preview / no `DATABASE_URL`): open the in-memory DB and apply
- *   `migrations/*.sql`. Idempotent — concurrent callers share one promise.
- * - **Neon**: no-op (pool is created lazily on first query).
+ * Finish DB bootstrap before the server handles traffic — open the backend and
+ * apply `migrations/*.sql` on both paths (PGLite in preview, Postgres when
+ * `DATABASE_URL` is set). Idempotent: concurrent callers share one promise.
  *
  * Vite `configureServer` awaits this at dev startup; production imports of this
  * module kick it off immediately (see bottom of file).
  */
 export function ensureDbReady(): Promise<void> {
-  if (dbSource !== "pglite") return Promise.resolve();
   return getSql().then(() => undefined);
 }
 

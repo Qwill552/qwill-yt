@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { availableEpisodes, slugFromQueueId } from "./animego";
 import { useQueue, type QueueVideo } from "./queue-store";
 
@@ -99,6 +100,20 @@ export function useAnimeUpdates(onQueueItem: () => void) {
       return next;
     });
 
+    /**
+     * Откат оптимистичного колокольчика. Раньше провал глотался молча — и,
+     * поскольку `fetch` резолвится и на 500, залитый колокольчик означал
+     * «подписка сохранена», хотя сервер не сохранил ничего.
+     */
+    const revert = () => {
+      setSubscribedIds((prev) => {
+        const next = new Set(prev);
+        if (subscribed) next.delete(video.id);
+        else next.add(video.id);
+        return next;
+      });
+    };
+
     fetch("/api/anime-subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -113,9 +128,17 @@ export function useAnimeUpdates(onQueueItem: () => void) {
         episodesAvailable: availableEpisodes(video.episodes),
         subscribed,
       }),
-    }).catch(() => {
-      /* best-effort — a failed toggle just gets corrected on next SSE sync */
-    });
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      })
+      .catch((err: unknown) => {
+        console.error("[anime] subscribe failed:", err);
+        revert();
+        toast.error(
+          subscribed ? "Не удалось подписаться на тайтл" : "Не удалось снять подписку",
+        );
+      });
   }, []);
 
   return { notifications, subscribedIds, markRead, setSubscribed };
