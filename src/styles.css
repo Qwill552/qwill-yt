@@ -184,6 +184,34 @@
   }
 }
 
+.tooltip-content {
+  animation: tooltip-in 120ms var(--ease-smooth-out) both;
+}
+
+.tooltip-content[data-state="closed"] {
+  animation: tooltip-out 100ms var(--ease-smooth-out) both;
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tooltip-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .press-thumb,
   .press-thumb:hover,
@@ -194,6 +222,11 @@
   }
 
   .card-enter {
+    animation: none;
+  }
+
+  .tooltip-content,
+  .tooltip-content[data-state="closed"] {
     animation: none;
   }
 

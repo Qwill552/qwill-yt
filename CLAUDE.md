@@ -1,4 +1,7 @@
-# Project rules (user-specific, overrides nothing in AGENTS.md but adds to it)
+# Project rules for Claude Code
+
+(also see `AGENTS.md` — that file is a *different* agent's sandbox contract,
+for Grok Build, not for Claude Code; it does not apply here)
 
 - **Never run `npm install` / install or modify dependencies in this workspace.**
   Assume `node_modules` may be absent locally — do not try to fix that by
@@ -10,6 +13,13 @@
   deployed via the CI workflow in `.github/`.
 - **Claude in Chrome (`mcp__claude-in-chrome__*` tools) is forbidden.** Never
   load or call these tools in this project, for any reason.
+- **Nothing reaches the live site until it's pushed to `master` on GitHub —
+  there is no other deploy path.** Since local verification is disabled here,
+  an unpushed change is invisible to both the user and to CI: the user can't
+  check it, and no build/deploy runs for it. This means every finished piece
+  of work MUST end with an actual `git push` to `master` (not just a local
+  commit) — do not stop at "committed," that alone changes nothing on the
+  live site.
 - **Push after every completed piece of work.** Once a task is done, commit
   and push it to `master` (unless the user says otherwise for that task) so
   CI deploys it — don't leave finished work uncommitted/unpushed.

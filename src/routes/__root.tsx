@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { THEME_DARK_COLOR } from "@/lib/theme";
 import appCss from "../styles.css?url";
 
@@ -57,7 +58,9 @@ export const Route = createRootRoute({
       <body>
         <PreviewHostBridge />
         <AuthProvider>
-          <Outlet />
+          <TooltipProvider delayDuration={400} skipDelayDuration={100}>
+            <Outlet />
+          </TooltipProvider>
         </AuthProvider>
         <Scripts />
       </body>

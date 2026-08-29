@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bell, Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { availableEpisodes, clampWatched, formatEpisodes } from "@/lib/animego";
 import type { Priority, QueueVideo } from "@/lib/queue-store";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,8 @@ export function VideoCard({
   onSubscribeChange,
 }: VideoCardProps) {
   const [thumb, setThumb] = useState(video.thumbnail);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const [titleTruncated, setTitleTruncated] = useState(false);
   const isAnime = video.source === "animego";
   const duration = formatDuration(video.durationSeconds);
   const available = availableEpisodes(video.episodes);
@@ -34,6 +37,16 @@ export function VideoCard({
   const episodes = formatEpisodes(video.episodes, watched);
   const badge = isAnime ? episodes : duration;
   const published = formatPublishedAt(video.publishedAt);
+
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const check = () => setTitleTruncated(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [video.title]);
 
   return (
     <article
@@ -93,15 +106,36 @@ export function VideoCard({
 
       <div className="flex flex-1 flex-col gap-3 px-2 pt-3 pb-1.5">
         <div className="flex flex-col gap-1.5">
-          <h3 className="line-clamp-2 font-medium text-sm text-fg leading-snug sm:text-base">
-            <a
-              href={video.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors duration-150 hover:text-accent focus-visible:text-accent"
-            >
-              {video.title}
-            </a>
+          <h3
+            ref={titleRef}
+            className="line-clamp-2 font-medium text-sm text-fg leading-snug sm:text-base"
+          >
+            {titleTruncated ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href={video.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="transition-colors duration-150 hover:text-accent focus-visible:text-accent"
+                  >
+                    {video.title}
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start">
+                  {video.title}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <a
+                href={video.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors duration-150 hover:text-accent focus-visible:text-accent"
+              >
+                {video.title}
+              </a>
+            )}
           </h3>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted text-sm">
             <span className="max-w-full truncate">{video.channel}</span>
