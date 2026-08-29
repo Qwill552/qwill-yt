@@ -1,7 +1,7 @@
 import { getSql } from "../../src/lib/db";
 import type { NotificationPayload } from "./live-bus";
 
-const RECHECK_HOURS = 6;
+const RECHECK_HOURS = 3;
 const NOTIFICATION_RETENTION_DAYS = 30;
 
 export type AnimeTrackingRow = {
@@ -46,19 +46,17 @@ export type SubscribeInput = {
   subscribed: boolean;
 };
 
-/** Раз в ~6ч, но с рандомным сдвигом первого чека — так карточки не бьют AnimeGO одним залпом. */
-function jitteredNextCheck(): Date {
-  const jitterMs = Math.random() * RECHECK_HOURS * 60 * 60 * 1000;
-  return new Date(Date.now() + jitterMs);
-}
-
 function nextCheckAfterRecheck(): Date {
   return new Date(Date.now() + RECHECK_HOURS * 60 * 60 * 1000);
 }
 
 export async function upsertSubscription(input: SubscribeInput): Promise<void> {
   const sql = await getSql();
-  const nextCheckAt = jitteredNextCheck();
+  // Новая подписка проверяется сразу (обработчик тут же пинает чекер), дальше —
+  // раз в RECHECK_HOURS от момента проверки. Разброс по времени берётся сам
+  // собой: подписки ставятся в разные моменты, и все следующие чеки от них
+  // и отсчитываются — залпом по AnimeGO это не бьёт.
+  const nextCheckAt = new Date();
   await sql`
     insert into anime_tracking
       (id, slug, url, title, studio, thumbnail, episodes_raw, episodes_available, subscribed, next_check_at)

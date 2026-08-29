@@ -1,6 +1,7 @@
 import { defineHandler } from "nitro";
 import { z } from "zod";
 import { upsertSubscription } from "../lib/anime-tracking-store";
+import { kickAnimeCheck } from "../lib/anime-checker";
 
 const bodySchema = z.object({
   id: z.string().min(1),
@@ -30,6 +31,11 @@ export default defineHandler(async (event) => {
     episodesAvailable: parsed.data.episodesAvailable ?? null,
     subscribed: parsed.data.subscribed,
   });
+
+  // Первый чек — не дожидаясь тика интервала: `upsertSubscription` пометила
+  // строку как просроченную, остаётся разбудить чекер. Fire-and-forget —
+  // ответ подписки не должен ждать похода на AnimeGO.
+  if (parsed.data.subscribed) kickAnimeCheck();
 
   return Response.json({ ok: true });
 });

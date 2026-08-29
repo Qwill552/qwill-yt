@@ -86,6 +86,26 @@ async function runPass(): Promise<void> {
   }
 }
 
+/**
+ * Проходы сериализованы: внеочередной пинок во время работы интервала не
+ * запускает вторую параллельную партию, а встаёт следом за текущей.
+ */
+let passChain: Promise<void> = Promise.resolve();
+
+function schedulePass(): void {
+  passChain = passChain.catch(() => undefined).then(runPass);
+}
+
+/**
+ * Прогнать проверку вне расписания — вызывается сразу после новой подписки
+ * (`POST /api/anime-subscribe`), чтобы первая серия не ждала до следующего
+ * тика интервала. Строка к этому моменту уже `next_check_at = now()`, так что
+ * обычный `getDueAnime` её и подхватит.
+ */
+export function kickAnimeCheck(): void {
+  schedulePass();
+}
+
 const globalRef = globalThis as typeof globalThis & {
   __animeCheckerStarted__?: boolean;
 };
@@ -95,5 +115,5 @@ export function ensureAnimeCheckerStarted(): void {
   if (typeof window !== "undefined") return;
   if (globalRef.__animeCheckerStarted__) return;
   globalRef.__animeCheckerStarted__ = true;
-  setInterval(() => void runPass(), INTERVAL_MS);
+  setInterval(schedulePass, INTERVAL_MS);
 }
