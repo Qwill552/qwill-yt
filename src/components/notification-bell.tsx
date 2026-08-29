@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Bell, Tv } from "lucide-react";
-import type { AnimeNotification } from "@/lib/anime-updates";
+import { describeNotification, type AnimeNotification } from "@/lib/notification-text";
 import { cn } from "@/lib/utils";
 
 const MARK_READ_DELAY_MS = 1500;
@@ -11,10 +11,17 @@ const MARK_READ_DELAY_MS = 1500;
 type NotificationBellProps = {
   notifications: AnimeNotification[];
   onMarkRead: (ids: number[]) => void;
+  /** Список управляется снаружи: его открывает и клик по всплывающей плашке. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 };
 
-export function NotificationBell({ notifications, onMarkRead }: NotificationBellProps) {
-  const [open, setOpen] = useState(false);
+export function NotificationBell({
+  notifications,
+  onMarkRead,
+  open,
+  onOpenChange,
+}: NotificationBellProps) {
   const markReadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const unreadCount = useMemo(
@@ -33,7 +40,7 @@ export function NotificationBell({ notifications, onMarkRead }: NotificationBell
   }, [open]);
 
   return (
-    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+    <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
@@ -65,16 +72,20 @@ export function NotificationBell({ notifications, onMarkRead }: NotificationBell
           align="start"
           sideOffset={8}
           className={cn(
-            "z-40 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg",
+            // 660×380 — размер, заданный вручную: постер и шрифты внутри
+            // увеличены вдвое против прежней узкой панели.
+            "z-40 w-[660px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg",
             "bg-surface shadow-border",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
           )}
         >
-          <div className="max-h-[70vh] overflow-y-auto py-1.5">
+          <div className="max-h-[380px] overflow-y-auto py-2">
             {notifications.length === 0 ? (
-              <p className="px-4 py-6 text-center text-muted text-sm">Уведомлений пока нет</p>
+              <p className="px-8 py-12 text-center text-2xl text-muted">
+                Уведомлений пока нет
+              </p>
             ) : (
               notifications.map((notification, index) => (
                 <NotificationRow
@@ -99,22 +110,24 @@ function NotificationRow({
   showDivider: boolean;
 }) {
   const when = formatWhen(notification.createdAt);
+  const completed = notification.kind === "completed";
+
   return (
     <>
       {showDivider ? (
-        <div className="my-1 flex items-center gap-2 px-4">
+        <div className="my-2 flex items-center gap-3 px-5">
           <span className="h-px flex-1 bg-border" />
-          <span className="text-subtle text-xs uppercase tracking-kicker">Ранее</span>
+          <span className="text-subtle text-base uppercase tracking-kicker">Ранее</span>
           <span className="h-px flex-1 bg-border" />
         </div>
       ) : null}
       <div
         className={cn(
-          "flex items-center gap-3 px-4 py-2.5",
+          "flex items-center gap-5 px-5 py-3",
           !notification.readAt && "bg-accent/5",
         )}
       >
-        <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-surface-2">
+        <div className="flex size-22 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-2">
           {notification.thumbnail ? (
             <img
               src={notification.thumbnail}
@@ -123,18 +136,27 @@ function NotificationRow({
               loading="lazy"
             />
           ) : (
-            <Tv className="size-5 text-subtle" strokeWidth={1.5} />
+            <Tv className="size-10 text-subtle" strokeWidth={1.5} />
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium text-fg text-sm">{notification.title}</p>
-          <p className="truncate text-muted text-xs">
-            {notification.episodeTitle ?? `${notification.episodeNumber} серия`}
+          <p className="truncate font-medium text-[1.75rem] text-fg leading-tight">
+            {notification.title}
+          </p>
+          <p className="truncate text-2xl text-muted">
+            {describeNotification(notification)}
             {when ? ` · ${when}` : ""}
           </p>
         </div>
-        <span className="shrink-0 rounded-xs bg-surface-2 px-1.5 py-0.5 font-medium text-fg text-xs tabular-nums">
-          {notification.episodeNumber}
+        <span
+          className={cn(
+            "shrink-0 rounded-sm px-3 py-1 font-medium text-2xl tabular-nums",
+            completed
+              ? "bg-accent text-accent-fg tracking-kicker"
+              : "bg-surface-2 text-fg",
+          )}
+        >
+          {completed ? "ФУЛЛ" : notification.episodeNumber}
         </span>
       </div>
     </>

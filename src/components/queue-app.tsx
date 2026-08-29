@@ -7,7 +7,11 @@ import { TabBar } from "@/components/tab-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/components/theme-provider";
 import { VideoCard } from "@/components/video-card";
-import { useAnimeUpdates } from "@/lib/anime-updates";
+import {
+  trackAnimeCards,
+  untrackAnimeCard,
+  useAnimeUpdates,
+} from "@/lib/anime-updates";
 import {
   CATEGORY_META,
   PRIORITY_META,
@@ -105,12 +109,24 @@ export function QueueApp() {
   useEffect(() => {
     if (!ready) return;
     refreshIngestInbox();
+    // Очередь живёт в localStorage, поэтому список аниме сервер узнаёт только
+    // отсюда — иначе ему нечему обновлять счётчик серий. Сервер заводит лишь
+    // неизвестные ему строки, так что полный список на каждый заход дёшев.
+    trackAnimeCards(useQueue.getState().videos);
     // Дальнейшие приходы почты триггерятся живьём через SSE (см. useAnimeUpdates) —
     // этот эффект отвечает только за первичную загрузку.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  const { notifications, subscribedIds, markRead, setSubscribed } =
+  const handleRemove = useCallback(
+    (video: QueueVideo) => {
+      removeVideo(video.id);
+      untrackAnimeCard(video);
+    },
+    [removeVideo],
+  );
+
+  const { notifications, subscribedIds, markRead, setSubscribed, bellOpen, setBellOpen } =
     useAnimeUpdates(refreshIngestInbox);
 
   const categoryVideos = useMemo(
@@ -143,7 +159,7 @@ export function QueueApp() {
     setBusy(true);
     try {
       const meta = await fetchAnimegoMeta({ data: { url } });
-      addVideo({
+      const video: QueueVideo = {
         id,
         url: meta.url,
         title: meta.title,
@@ -157,7 +173,11 @@ export function QueueApp() {
         priority,
         category: "anime",
         addedAt: Date.now(),
-      });
+      };
+      addVideo(video);
+      // Не дожидаясь следующего захода на сайт: счётчик серий у новой карточки
+      // должен начать обновляться сразу.
+      trackAnimeCards([video]);
       toast.success(
         category === "anime"
           ? "Карточка добавлена"
@@ -264,8 +284,10 @@ export function QueueApp() {
         <Toaster
           theme={theme}
           position="bottom-right"
-          // На узких экранах sonner растягивает тост на всю ширину, поэтому
-          // сдвигаем его выше таб-бара (48px кнопка + отступы + safe area).
+          // Таб-бар прибит к низу по центру, а на узких экранах sonner ещё и
+          // растягивает тост на всю ширину — поэтому поднимаем тосты выше него
+          // на любой ширине (48px кнопка + отступы + safe area).
+          offset={{ bottom: "6.5rem", right: "1.5rem" }}
           mobileOffset={{ bottom: "6.5rem", left: "1rem", right: "1rem" }}
           toastOptions={{
             className:
@@ -277,7 +299,12 @@ export function QueueApp() {
       <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 pt-10 pb-32 sm:px-6 sm:pt-14">
         <header className="flex flex-col gap-6">
           <div className="flex items-center justify-between gap-4">
-            <NotificationBell notifications={notifications} onMarkRead={markRead} />
+            <NotificationBell
+              notifications={notifications}
+              onMarkRead={markRead}
+              open={bellOpen}
+              onOpenChange={setBellOpen}
+            />
             <ThemeToggle />
           </div>
 
@@ -384,7 +411,7 @@ export function QueueApp() {
                         onWatched={(episodes) =>
                           patchVideo(video.id, { watchedEpisodes: episodes })
                         }
-                        onRemove={() => removeVideo(video.id)}
+                        onRemove={() => handleRemove(video)}
                         subscribed={subscribedIds.has(video.id)}
                         onSubscribeChange={(next) => setSubscribed(video, next)}
                       />

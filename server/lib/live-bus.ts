@@ -5,9 +5,14 @@ import { EventEmitter } from "node:events";
  * server/api/live-updates.get.ts (SSE). В памяти одного Node-процесса
  * достаточно: сайт крутится одним systemd-инстансом, без нескольких воркеров.
  */
+
+/** «Вышла новая серия» либо «тайтл вышел полностью». */
+export type NotificationKind = "episode" | "completed";
+
 export type NotificationPayload = {
   id: number;
   animeId: string;
+  kind: NotificationKind;
   title: string;
   thumbnail: string | null;
   episodeNumber: number;
