@@ -24,12 +24,12 @@ export function WishlistStar({ count, open, onToggle }: WishlistStarProps) {
       title="Вишлист — аниме, которое ещё не вышло"
       className={cn(
         "relative flex size-12 shrink-0 items-center justify-center rounded-lg",
-        "bg-surface-2 shadow-border",
+        // Тот же акцентный цвет, что у колокольчика: он свой в каждой теме.
+        "bg-surface-2 text-accent shadow-border",
         "transition-[background-color,box-shadow,transform,color] duration-150 ease-out",
-        "hover:shadow-border-hover",
+        "hover:shadow-border-hover hover:text-fg",
         "focus-visible:ring-2 focus-visible:ring-accent/50",
         "active:not-disabled:scale-[0.96]",
-        open ? "text-medium" : "text-accent hover:text-fg",
       )}
     >
       <Star
@@ -40,7 +40,7 @@ export function WishlistStar({ count, open, onToggle }: WishlistStarProps) {
       {!open && count > 0 ? (
         <span
           aria-hidden="true"
-          className="absolute top-2 right-2 size-2 rounded-full bg-medium shadow-[0_0_0_2px_var(--color-surface-2)]"
+          className="absolute top-2 right-2 size-2 rounded-full bg-accent shadow-[0_0_0_2px_var(--color-surface-2)]"
         />
       ) : null}
     </button>
