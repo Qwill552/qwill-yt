@@ -3,11 +3,17 @@ import { toast } from "sonner";
 import { NotificationAlert } from "@/components/notification-alert";
 import { availableEpisodes, slugFromQueueId } from "./animego";
 import type { AnimeNotification } from "./notification-text";
-import { useQueue, type QueueVideo } from "./queue-store";
+import { useQueue, type Priority, type QueueVideo } from "./queue-store";
+import type { WishlistItem } from "./wishlist";
 
 export type { AnimeNotification } from "./notification-text";
 
-type SyncPayload = { notifications: AnimeNotification[]; subscribedIds: string[] };
+type SyncPayload = {
+  notifications: AnimeNotification[];
+  subscribedIds: string[];
+  wishlist: WishlistItem[];
+};
+type WishlistEventPayload = { items: WishlistItem[] };
 type EpisodeUpdatedPayload = {
   animeId: string;
   episodesRaw: string | null;
@@ -41,6 +47,53 @@ function writeAlertedId(id: number): void {
   } catch {
     /* приватный режим / переполненное хранилище — плашка просто повторится */
   }
+}
+
+/**
+ * Тайтлы вишлиста, для которых карточка в ЭТОМ браузере уже создана. Вишлист
+ * общий (лежит на сервере), а очередь у каждого браузера своя, поэтому строка
+ * висит в списке ещё месяц после выхода — чтобы карточку успело забрать и
+ * редко открываемое устройство. Отметка о заборе, наоборот, сугубо локальная.
+ */
+const PROMOTED_KEY = "qwill-yt:promoted-wishlist";
+
+function readPromoted(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(PROMOTED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? (parsed as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writePromoted(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(PROMOTED_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* приватный режим — в худшем случае карточка создастся повторно после её удаления */
+  }
+}
+
+/** Вышедший тайтл вишлиста → карточка очереди с запомненным приоритетом. */
+function wishlistToVideo(item: WishlistItem): QueueVideo {
+  return {
+    id: item.id,
+    url: item.url,
+    title: item.title,
+    channel: item.studio || "AnimeGO",
+    channelUrl: null,
+    durationSeconds: null,
+    episodes: item.episodesRaw,
+    watchedEpisodes: 0,
+    publishedAt: item.releaseDate,
+    thumbnail: item.thumbnail ?? "",
+    source: "animego",
+    priority: item.priority,
+    category: "anime",
+    addedAt: Date.now(),
+  };
 }
 
 function parseEvent<T>(event: Event): T | null {
@@ -112,8 +165,11 @@ export function untrackAnimeCard(video: QueueVideo): void {
  */
 export function useAnimeUpdates(onQueueItem: () => void) {
   const patchVideo = useQueue((state) => state.patchVideo);
+  const addVideo = useQueue((state) => state.addVideo);
   const [notifications, setNotifications] = useState<AnimeNotification[]>([]);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
+  const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [promotedIds, setPromotedIds] = useState<Set<string>>(() => readPromoted());
   const [bellOpen, setBellOpen] = useState(false);
   const onQueueItemRef = useRef(onQueueItem);
   onQueueItemRef.current = onQueueItem;
@@ -178,6 +234,7 @@ export function useAnimeUpdates(onQueueItem: () => void) {
       if (!data) return;
       setNotifications(data.notifications);
       setSubscribedIds(new Set(data.subscribedIds));
+      setWishlist(data.wishlist ?? []);
 
       // Догоняем то, что пришло, пока сайт был закрыт: непрочитанное, о чём
       // плашка ещё не рассказывала. Порядок с сервера — от новых к старым.
@@ -198,12 +255,122 @@ export function useAnimeUpdates(onQueueItem: () => void) {
       pushToAlert([data.notification]);
     });
 
+    source.addEventListener("wishlist", (event) => {
+      const data = parseEvent<WishlistEventPayload>(event);
+      if (!data) return;
+      setWishlist(data.items);
+    });
+
     source.addEventListener("queue-item", () => {
       onQueueItemRef.current();
     });
 
     return () => source.close();
   }, [patchVideo, pushToAlert]);
+
+  /**
+   * Тайтл вышел — заводим карточку с тем приоритетом, что был выбран при
+   * добавлении в вишлист. Подписка на новые серии уже стоит на строке
+   * (`subscribed`), поэтому колокольчик у карточки сразу залит, а ещё одного
+   * уведомления о первой серии не будет: сервер прислал единственное
+   * «Теперь онгоинг!» вместо него.
+   */
+  useEffect(() => {
+    const aired = wishlist.filter(
+      (item) => item.airedAt && !promotedIds.has(item.id),
+    );
+    if (aired.length === 0) return;
+
+    const queued = new Set(useQueue.getState().videos.map((video) => video.id));
+    for (const item of aired) {
+      if (!queued.has(item.id)) addVideo(wishlistToVideo(item));
+    }
+
+    const next = new Set(promotedIds);
+    for (const item of aired) next.add(item.id);
+    writePromoted(next);
+    setPromotedIds(next);
+  }, [wishlist, promotedIds, addVideo]);
+
+  /** Панель показывает только то, что этот браузер ещё не забрал в очередь. */
+  const pendingWishlist = wishlist.filter((item) => !promotedIds.has(item.id));
+
+  /**
+   * Общая оптимистичная правка строки вишлиста: локально применяем сразу,
+   * сервер всё равно пришлёт свой список через SSE, а на провале откатываем.
+   */
+  const patchWishlist = useCallback(
+    (id: string, patch: Partial<WishlistItem>, errorText: string) => {
+      let previous: WishlistItem | undefined;
+      setWishlist((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          previous = item;
+          return { ...item, ...patch };
+        }),
+      );
+
+      fetch("/api/wishlist/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        })
+        .catch((err: unknown) => {
+          console.error("[wishlist] update failed:", err);
+          if (previous) {
+            const restored = previous;
+            setWishlist((prev) =>
+              prev.map((item) => (item.id === id ? restored : item)),
+            );
+          }
+          toast.error(errorText);
+        });
+    },
+    [],
+  );
+
+  const setWishlistPriority = useCallback(
+    (id: string, priority: Priority) =>
+      patchWishlist(id, { priority }, "Не удалось сменить приоритет"),
+    [patchWishlist],
+  );
+
+  const setWishlistSubscribed = useCallback(
+    (id: string, subscribed: boolean) =>
+      patchWishlist(
+        id,
+        { subscribed },
+        subscribed
+          ? "Не удалось включить уведомления"
+          : "Не удалось выключить уведомления",
+      ),
+    [patchWishlist],
+  );
+
+  const removeWishlistItem = useCallback((id: string) => {
+    const snapshot: WishlistItem[] = [];
+    setWishlist((prev) => {
+      snapshot.push(...prev);
+      return prev.filter((item) => item.id !== id);
+    });
+
+    fetch("/api/wishlist/remove", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      })
+      .catch((err: unknown) => {
+        console.error("[wishlist] remove failed:", err);
+        setWishlist(snapshot);
+        toast.error("Не удалось убрать тайтл из вишлиста");
+      });
+  }, []);
 
   const markRead = useCallback((ids: number[]) => {
     if (ids.length === 0) return;
@@ -269,5 +436,35 @@ export function useAnimeUpdates(onQueueItem: () => void) {
     setSubscribed,
     bellOpen,
     setBellOpen,
+    wishlist: pendingWishlist,
+    setWishlistPriority,
+    setWishlistSubscribed,
+    removeWishlistItem,
   };
+}
+
+/**
+ * Кладёт ещё не вышедший тайтл в вишлист. Карточка не создаётся: она родится
+ * сама в день выхода — с этим самым приоритетом.
+ */
+export async function addToWishlist(item: {
+  id: string;
+  slug: string;
+  url: string;
+  title: string;
+  studio: string | null;
+  thumbnail: string | null;
+  status: string | null;
+  episodesRaw: string | null;
+  episodesAvailable: number | null;
+  priority: Priority;
+  releaseDate: string | null;
+  releaseRaw: string | null;
+}): Promise<void> {
+  const res = await fetch("/api/wishlist/add", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(item),
+  });
+  if (!res.ok) throw new Error("Не удалось добавить в вишлист");
 }

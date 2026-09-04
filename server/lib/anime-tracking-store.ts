@@ -1,21 +1,20 @@
+import { hasJustAired, isReleasedStatus } from "../../src/lib/animego";
 import { getSql } from "../../src/lib/db";
+import type { Priority } from "../../src/lib/queue-store";
+import type { WishlistItem } from "../../src/lib/wishlist";
 import type { NotificationKind, NotificationPayload } from "./live-bus";
 
 const RECHECK_HOURS = 3;
 const NOTIFICATION_RETENTION_DAYS = 30;
 
 /**
- * Поле «Статус» на AnimeGO у полностью вышедшего тайтла — «Вышел» (онгоинг —
- * «Онгоинг», ещё не начавшийся — «Анонс»). Всё, что не опознано как вышедшее,
- * считается живым и продолжает перечитываться: пропустить смену формулировки
- * не так дорого, как навсегда перестать чекать онгоинг.
+ * Сколько вышедший вишлист-тайтл ещё висит в списке. Очередь у каждого браузера
+ * своя, поэтому карточку создаёт каждый — при своём ближайшем открытии сайта;
+ * строка должна дождаться самого редко заходящего устройства.
  */
-const RELEASED_STATUSES = new Set(["вышел", "вышло", "завершён", "завершен"]);
+const WISHLIST_AIRED_RETENTION_DAYS = 30;
 
-export function isReleasedStatus(status: string | null | undefined): boolean {
-  if (!status) return false;
-  return RELEASED_STATUSES.has(status.trim().toLowerCase());
-}
+export { isReleasedStatus };
 
 export type AnimeTrackingRow = {
   id: string;
@@ -35,6 +34,12 @@ export type AnimeTrackingRow = {
   next_check_at: string;
   check_failed_count: number;
   created_at: string;
+  /** строка вишлиста: тайтл ещё не вышел (или вышел, но не всеми забран) */
+  wishlist: boolean;
+  wishlist_priority: Priority;
+  release_date: string | null;
+  release_raw: string | null;
+  aired_at: string | null;
 };
 
 export type AnimeNotificationRow = {
@@ -177,6 +182,119 @@ export async function getBySlug(slug: string): Promise<AnimeTrackingRow | null> 
   return rows[0] ?? null;
 }
 
+/** Аниме, которое ещё не вышло: то же отслеживание плюс запомненный приоритет. */
+export type WishlistInput = {
+  id: string;
+  slug: string;
+  url: string;
+  title: string;
+  studio: string | null;
+  thumbnail: string | null;
+  status: string | null;
+  episodesRaw: string | null;
+  episodesAvailable: number | null;
+  priority: Priority;
+  releaseDate: string | null;
+  releaseRaw: string | null;
+};
+
+export function toWishlistItem(row: AnimeTrackingRow): WishlistItem {
+  return {
+    id: row.id,
+    slug: row.slug,
+    url: row.url,
+    title: row.title,
+    studio: row.studio,
+    thumbnail: row.thumbnail,
+    priority: row.wishlist_priority,
+    releaseDate: row.release_date,
+    releaseRaw: row.release_raw,
+    episodesRaw: row.episodes_raw,
+    subscribed: row.subscribed,
+    airedAt: row.aired_at,
+  };
+}
+
+/** Вышедшие — первыми (их пора забирать в очередь), дальше по близости выхода. */
+export async function getWishlist(): Promise<WishlistItem[]> {
+  const sql = await getSql();
+  const rows = await sql<AnimeTrackingRow>`
+    select * from anime_tracking
+    where wishlist = true
+    order by
+      (aired_at is null) asc,
+      coalesce(release_date, '9999-12-31') asc,
+      created_at desc
+  `;
+  return rows.map(toWishlistItem);
+}
+
+/**
+ * Кладёт тайтл в вишлист. Строка та же, что у обычной карточки, поэтому
+ * добавление уже отслеживаемого аниме просто включает ему вишлист-режим.
+ * Уведомления включены по умолчанию: иначе о самом выходе никто не расскажет.
+ */
+export async function addToWishlist(input: WishlistInput): Promise<void> {
+  const sql = await getSql();
+  const nextCheckAt = new Date();
+  await sql`
+    insert into anime_tracking
+      (id, slug, url, title, studio, thumbnail, status, episodes_raw, episodes_available,
+       subscribed, next_check_at, wishlist, wishlist_priority, release_date, release_raw)
+    values
+      (${input.id}, ${input.slug}, ${input.url}, ${input.title}, ${input.studio},
+       ${input.thumbnail}, ${input.status}, ${input.episodesRaw}, ${input.episodesAvailable},
+       true, ${nextCheckAt}, true, ${input.priority}, ${input.releaseDate}, ${input.releaseRaw})
+    on conflict (id) do update set
+      wishlist = true,
+      wishlist_priority = excluded.wishlist_priority,
+      subscribed = true,
+      aired_at = null,
+      title = excluded.title,
+      studio = coalesce(excluded.studio, anime_tracking.studio),
+      thumbnail = coalesce(excluded.thumbnail, anime_tracking.thumbnail),
+      release_date = coalesce(excluded.release_date, anime_tracking.release_date),
+      release_raw = coalesce(excluded.release_raw, anime_tracking.release_raw),
+      next_check_at = excluded.next_check_at
+  `;
+}
+
+/** Убрали из вишлиста руками — строка и её уведомления уходят вместе с ней. */
+export async function removeFromWishlist(id: string): Promise<void> {
+  const sql = await getSql();
+  await sql`delete from anime_tracking where id = ${id} and wishlist = true`;
+}
+
+/** Приоритет и колокольчик правятся прямо в панели, до выхода тайтла. */
+export async function updateWishlistItem(
+  id: string,
+  patch: { priority?: Priority; subscribed?: boolean },
+): Promise<void> {
+  const sql = await getSql();
+  await sql`
+    update anime_tracking set
+      wishlist_priority = coalesce(${patch.priority ?? null}::text, wishlist_priority),
+      subscribed = coalesce(${patch.subscribed ?? null}::boolean, subscribed)
+    where id = ${id} and wishlist = true
+  `;
+}
+
+/**
+ * Вышедшие тайтлы, которые уже никто не заберёт, выпадают из вишлиста —
+ * строка остаётся обычной отслеживаемой карточкой.
+ */
+export async function cleanupAiredWishlist(): Promise<number> {
+  const sql = await getSql();
+  const rows = await sql<{ id: string }>`
+    update anime_tracking set wishlist = false
+    where wishlist = true
+      and aired_at is not null
+      and aired_at < now() - (${WISHLIST_AIRED_RETENTION_DAYS} * interval '1 day')
+    returning id
+  `;
+  return rows.length;
+}
+
 export type CheckResult = {
   status: string | null;
   episodesRaw: string | null;
@@ -185,6 +303,8 @@ export type CheckResult = {
   latestEpisodeTitle: string | null;
   title?: string;
   thumbnail?: string | null;
+  releaseDate?: string | null;
+  releaseRaw?: string | null;
 };
 
 /**
@@ -209,6 +329,16 @@ export async function applyCheckResult(
   const justFinished =
     finished && previous.status != null && !isReleasedStatus(previous.status);
   const hasNewEpisode = newNumber != null && oldNumber != null && newNumber > oldNumber;
+  // Тайтл из вишлиста вышел: у строки появляется `aired_at`, и браузеры
+  // создают себе карточку с запомненным приоритетом.
+  const justAired =
+    previous.wishlist &&
+    previous.aired_at == null &&
+    hasJustAired(previous.status, {
+      status: result.status,
+      episodesAvailable: result.episodesAvailable,
+      latestEpisodeNumber: result.latestEpisodeNumber,
+    });
   const nextCheckAt = nextCheckAfterRecheck();
 
   await sql`
@@ -221,6 +351,9 @@ export async function applyCheckResult(
       latest_episode_title = ${result.latestEpisodeTitle},
       title = ${result.title ?? previous.title},
       thumbnail = ${result.thumbnail ?? previous.thumbnail},
+      release_date = coalesce(${result.releaseDate ?? null}::text, release_date),
+      release_raw = coalesce(${result.releaseRaw ?? null}::text, release_raw),
+      aired_at = case when ${justAired}::boolean then now() else aired_at end,
       last_checked_at = now(),
       next_check_at = ${nextCheckAt},
       check_failed_count = 0
@@ -229,15 +362,25 @@ export async function applyCheckResult(
 
   if (!previous.subscribed) return null;
 
-  // Последняя серия обычно выходит тем же заходом, каким статус переключается
-  // на «Вышел». Два уведомления об одном событии — шум, поэтому «вышло
-  // полностью» побеждает: итоговое число серий в нём и так есть.
-  const kind: NotificationKind | null = justFinished
-    ? "completed"
-    : hasNewEpisode
-      ? "episode"
-      : null;
-  if (kind == null || newNumber == null) return null;
+  // На одной проверке легко совпадают сразу несколько событий, а уведомление
+  // об одном и том же — шум. Порядок жёсткий:
+  //  • «теперь онгоинг» — старт тайтла из вишлиста. Первая серия приходит тем
+  //    же заходом, и отдельное «1 серия» о ней было бы дублем: карточка ведь
+  //    только что создалась именно потому, что аниме вышло;
+  //  • «вышло полностью» — последняя серия обычно выходит вместе со сменой
+  //    статуса, и итоговое число серий в этом уведомлении уже есть;
+  //  • «новая серия» — всё остальное.
+  const kind: NotificationKind | null = justAired
+    ? "ongoing"
+    : justFinished
+      ? "completed"
+      : hasNewEpisode
+        ? "episode"
+        : null;
+  // У стартовавшего анонса счётчик серий может быть ещё не разобран — старт
+  // всё равно первая серия.
+  const number = newNumber ?? (kind === "ongoing" ? 1 : null);
+  if (kind == null || number == null) return null;
 
   const rows = await sql<AnimeNotificationRow>`
     insert into anime_notifications (anime_id, kind, title, thumbnail, episode_number, episode_title)
@@ -246,8 +389,8 @@ export async function applyCheckResult(
       ${kind},
       ${result.title ?? previous.title},
       ${result.thumbnail ?? previous.thumbnail},
-      ${newNumber},
-      ${kind === "completed" ? null : result.latestEpisodeTitle}
+      ${number},
+      ${kind === "episode" ? result.latestEpisodeTitle : null}
     )
     returning *
   `;

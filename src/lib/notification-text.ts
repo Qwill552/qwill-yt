@@ -3,7 +3,7 @@
  * плашки, чтобы «20 серия» и «Вышло полностью, 24 серии» нигде не разъехались.
  */
 
-export type NotificationKind = "episode" | "completed";
+export type NotificationKind = "episode" | "completed" | "ongoing";
 
 export type AnimeNotification = {
   id: number;
@@ -11,7 +11,7 @@ export type AnimeNotification = {
   kind: NotificationKind;
   title: string;
   thumbnail: string | null;
-  /** У `completed` — итоговое число вышедших серий. */
+  /** У `completed` — итоговое число вышедших серий, у `ongoing` — первая. */
   episodeNumber: number;
   episodeTitle: string | null;
   createdAt: string;
@@ -42,5 +42,15 @@ export function describeNotification(notification: AnimeNotification): string {
   if (notification.kind === "completed") {
     return `Вышло полностью, ${pluralEpisodes(notification.episodeNumber)}`;
   }
+  // Тайтл из вишлиста стартовал: номер первой серии здесь не нужен — важно,
+  // что аниме вообще началось, а карточка уже появилась в очереди.
+  if (notification.kind === "ongoing") return "Теперь онгоинг!";
   return notification.episodeTitle ?? `${notification.episodeNumber} серия`;
+}
+
+/** Правый бейдж уведомления: номер серии, «ФУЛЛ» или «NEW!». */
+export function notificationBadge(notification: AnimeNotification): string {
+  if (notification.kind === "completed") return "ФУЛЛ";
+  if (notification.kind === "ongoing") return "NEW!";
+  return String(notification.episodeNumber);
 }

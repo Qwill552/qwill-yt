@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { WishlistItem } from "../../src/lib/wishlist";
 
 /**
  * Живые события для открытых вкладок — транслируются через
@@ -6,8 +7,8 @@ import { EventEmitter } from "node:events";
  * достаточно: сайт крутится одним systemd-инстансом, без нескольких воркеров.
  */
 
-/** «Вышла новая серия» либо «тайтл вышел полностью». */
-export type NotificationKind = "episode" | "completed";
+/** «Вышла новая серия», «тайтл вышел полностью» либо «тайтл из вишлиста стартовал». */
+export type NotificationKind = "episode" | "completed" | "ongoing";
 
 export type NotificationPayload = {
   id: number;
@@ -24,6 +25,8 @@ export type NotificationPayload = {
 export type LiveEvent =
   | { type: "queue-item" }
   | { type: "notification"; notification: NotificationPayload }
+  /** Вишлист целиком — он короткий, а менять его может и другое устройство. */
+  | { type: "wishlist"; items: WishlistItem[] }
   | {
       type: "episode-updated";
       animeId: string;

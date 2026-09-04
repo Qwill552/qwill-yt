@@ -1,11 +1,20 @@
 import { defineHandler } from "nitro";
 import { z } from "zod";
-import { animegoQueueId, animegoUrl, extractAnimegoSlug } from "../../src/lib/animego";
+import {
+  animegoQueueId,
+  animegoUrl,
+  availableEpisodes,
+  extractAnimegoSlug,
+  isUpcomingAnime,
+} from "../../src/lib/animego";
 import { parseAnimegoDate } from "../../src/lib/animego.functions";
 import { extractVideoId, thumbnailUrl, watchUrl } from "../../src/lib/youtube";
+import { addToWishlist } from "../lib/anime-tracking-store";
+import { kickAnimeCheck } from "../lib/anime-checker";
 import { resolveYoutubeMeta } from "../../src/lib/youtube.functions";
 import { enqueuePendingItem } from "../lib/pending-store";
 import { publish } from "../lib/live-bus";
+import { publishWishlist } from "../lib/wishlist-events";
 
 const priority = z.enum(["high", "medium", "low"]);
 
@@ -28,6 +37,10 @@ const animegoBody = z.object({
   thumbnail: z.string().optional(),
   episodes: z.string().nullish(),
   publishedAt: z.string().nullish(),
+  // Присылаются свежими версиями скрипта; без них анонс просто станет обычной
+  // карточкой, как было до вишлиста.
+  status: z.string().nullish(),
+  latestEpisodeNumber: z.number().nullish(),
 });
 
 export default defineHandler(async (event) => {
@@ -47,6 +60,37 @@ export default defineHandler(async (event) => {
     }
 
     const title = anime.data.title.replace(/\s+/g, " ").trim();
+    const episodes = anime.data.episodes?.replace(/\s+/g, " ").trim() || null;
+    const publishedAt = parseAnimegoDate(anime.data.publishedAt);
+
+    // Ещё не вышло — тайтл ждёт в вишлисте, карточка родится сама в день
+    // старта. Ровно то же решение, что и при вставке ссылки на сайте.
+    if (
+      isUpcomingAnime({
+        status: anime.data.status ?? null,
+        episodesAvailable: availableEpisodes(episodes),
+        latestEpisodeNumber: anime.data.latestEpisodeNumber ?? null,
+      })
+    ) {
+      await addToWishlist({
+        id: animegoQueueId(slug),
+        slug,
+        url: animegoUrl(slug),
+        title,
+        studio: anime.data.studio?.trim() || null,
+        thumbnail: anime.data.thumbnail?.trim() || null,
+        status: anime.data.status ?? null,
+        episodesRaw: episodes,
+        episodesAvailable: availableEpisodes(episodes),
+        priority: anime.data.priority,
+        releaseDate: publishedAt,
+        releaseRaw: anime.data.publishedAt?.replace(/\s+/g, " ").trim() || null,
+      });
+      await publishWishlist();
+      kickAnimeCheck();
+      return Response.json({ ok: true, title, wishlist: true });
+    }
+
     await enqueuePendingItem({
       videoId: animegoQueueId(slug),
       url: animegoUrl(slug),
@@ -54,9 +98,9 @@ export default defineHandler(async (event) => {
       channel: anime.data.studio?.trim() || "AnimeGO",
       thumbnail: anime.data.thumbnail?.trim() || "",
       durationSeconds: null,
-      episodes: anime.data.episodes?.replace(/\s+/g, " ").trim() || null,
+      episodes,
       source: "animego",
-      publishedAt: parseAnimegoDate(anime.data.publishedAt),
+      publishedAt,
       priority: anime.data.priority,
       addedAt: Date.now(),
     });

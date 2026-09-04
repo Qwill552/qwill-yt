@@ -7,7 +7,9 @@ import { TabBar } from "@/components/tab-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/components/theme-provider";
 import { VideoCard } from "@/components/video-card";
+import { WishlistPanel, WishlistStar } from "@/components/wishlist-panel";
 import {
+  addToWishlist,
   trackAnimeCards,
   untrackAnimeCard,
   useAnimeUpdates,
@@ -31,7 +33,12 @@ import {
   thumbnailUrl,
   watchUrl,
 } from "@/lib/youtube";
-import { animegoQueueId, extractAnimegoSlug } from "@/lib/animego";
+import {
+  animegoQueueId,
+  availableEpisodes,
+  extractAnimegoSlug,
+  isUpcomingAnime,
+} from "@/lib/animego";
 import { fetchAnimegoMeta } from "@/lib/animego.functions";
 
 type PendingIngestItem = {
@@ -128,8 +135,19 @@ export function QueueApp() {
     [removeVideo],
   );
 
-  const { notifications, subscribedIds, markRead, setSubscribed, bellOpen, setBellOpen } =
-    useAnimeUpdates(refreshIngestInbox);
+  const {
+    notifications,
+    subscribedIds,
+    markRead,
+    setSubscribed,
+    bellOpen,
+    setBellOpen,
+    wishlist,
+    setWishlistPriority,
+    setWishlistSubscribed,
+    removeWishlistItem,
+  } = useAnimeUpdates(refreshIngestInbox);
+  const [wishlistOpen, setWishlistOpen] = useState(false);
 
   const categoryVideos = useMemo(
     () => videos.filter((video) => video.category === category),
@@ -157,10 +175,43 @@ export function QueueApp() {
       toast("Это аниме уже в очереди");
       return;
     }
+    if (wishlist.some((item) => item.id === id)) {
+      toast("Это аниме уже в вишлисте");
+      return;
+    }
 
     setBusy(true);
     try {
       const meta = await fetchAnimegoMeta({ data: { url } });
+
+      // Ещё не вышло — карточки пока не будет: тайтл ждёт в вишлисте, а
+      // приоритет запоминается до дня выхода.
+      if (
+        isUpcomingAnime({
+          status: meta.status,
+          episodesAvailable: availableEpisodes(meta.episodes),
+          latestEpisodeNumber: meta.latestEpisodeNumber,
+        })
+      ) {
+        await addToWishlist({
+          id,
+          slug: meta.slug,
+          url: meta.url,
+          title: meta.title,
+          studio: meta.studio,
+          thumbnail: meta.thumbnail,
+          status: meta.status,
+          episodesRaw: meta.episodes,
+          episodesAvailable: availableEpisodes(meta.episodes),
+          priority,
+          releaseDate: meta.publishedAt,
+          releaseRaw: meta.releaseRaw,
+        });
+        setWishlistOpen(true);
+        toast.success("Аниме ещё не вышло — ждёт в вишлисте");
+        return;
+      }
+
       const video: QueueVideo = {
         id,
         url: meta.url,
@@ -310,7 +361,14 @@ export function QueueApp() {
               open={bellOpen}
               onOpenChange={setBellOpen}
             />
-            <ThemeToggle />
+            <div className="flex items-center gap-3">
+              <WishlistStar
+                count={wishlist.length}
+                open={wishlistOpen}
+                onToggle={() => setWishlistOpen((prev) => !prev)}
+              />
+              <ThemeToggle />
+            </div>
           </div>
 
           <div className="flex flex-col gap-3">
@@ -428,6 +486,15 @@ export function QueueApp() {
           </div>
         )}
       </main>
+
+      <WishlistPanel
+        items={wishlist}
+        open={wishlistOpen}
+        onClose={() => setWishlistOpen(false)}
+        onPriority={setWishlistPriority}
+        onSubscribed={setWishlistSubscribed}
+        onRemove={removeWishlistItem}
+      />
 
       <TabBar active={category} onChange={setCategory} />
     </div>

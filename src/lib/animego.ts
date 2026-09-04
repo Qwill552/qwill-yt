@@ -50,6 +50,62 @@ export function slugFromQueueId(id: string): string | null {
 }
 
 /**
+ * Поле «Статус» на AnimeGO у полностью вышедшего тайтла — «Вышел» (онгоинг —
+ * «Онгоинг», ещё не начавшийся — «Анонс»). Всё, что не опознано как вышедшее,
+ * считается живым и продолжает перечитываться: пропустить смену формулировки
+ * не так дорого, как навсегда перестать чекать онгоинг.
+ */
+const RELEASED_STATUSES = new Set(["вышел", "вышло", "завершён", "завершен"]);
+const ANNOUNCED_STATUSES = new Set(["анонс", "анонсировано", "анонсирован"]);
+
+export function isReleasedStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return RELEASED_STATUSES.has(status.trim().toLowerCase());
+}
+
+export function isAnnouncedStatus(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return ANNOUNCED_STATUSES.has(status.trim().toLowerCase());
+}
+
+/** Разобранное состояние страницы тайтла — что знаем о его выходе. */
+export type AnimeState = {
+  status: string | null;
+  episodesAvailable: number | null;
+  latestEpisodeNumber: number | null;
+};
+
+/**
+ * «Ещё не вышло» — такое аниме уходит в вишлист вместо очереди: страница
+ * говорит «Анонс» ИЛИ на ней нет ни одной вышедшей серии. Полностью вышедший
+ * тайтл сюда не попадает даже без разобранных серий: «Вышел» — это точно уже
+ * вышло, сколько бы серий ни удалось прочитать.
+ */
+export function isUpcomingAnime(state: AnimeState): boolean {
+  if (state.latestEpisodeNumber != null) return false;
+  if ((state.episodesAvailable ?? 0) > 0) return false;
+  return !isReleasedStatus(state.status);
+}
+
+/**
+ * Выход тайтла из вишлиста — «что раньше»: появилась первая вышедшая серия
+ * ИЛИ статус перестал быть «Анонс».
+ *
+ * Вторая половина — именно переход, а не статическая проверка «сейчас не
+ * анонс». Тайтл мог попасть в вишлист с кривым статусом (не «Анонс», но и без
+ * единой серии — AnimeGO иногда так и держит), и статическая проверка объявила
+ * бы его вышедшим на первой же перепроверке.
+ */
+export function hasJustAired(
+  previousStatus: string | null | undefined,
+  next: AnimeState,
+): boolean {
+  if (next.latestEpisodeNumber != null) return true;
+  if ((next.episodesAvailable ?? 0) > 0) return true;
+  return isAnnouncedStatus(previousStatus) && !isAnnouncedStatus(next.status);
+}
+
+/**
  * На animego эпизоды пишутся как «19 / 24» (вышло / запланировано),
  * «8 / ?» (онгоинг) или «52» (завершён). Нас интересует первое число —
  * сколько серий уже доступно к просмотру.

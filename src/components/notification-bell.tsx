@@ -3,7 +3,11 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Bell, Tv } from "lucide-react";
-import { describeNotification, type AnimeNotification } from "@/lib/notification-text";
+import {
+  describeNotification,
+  notificationBadge,
+  type AnimeNotification,
+} from "@/lib/notification-text";
 import { cn } from "@/lib/utils";
 
 const MARK_READ_DELAY_MS = 1500;
@@ -110,7 +114,8 @@ function NotificationRow({
   showDivider: boolean;
 }) {
   const when = formatWhen(notification.createdAt);
-  const completed = notification.kind === "completed";
+  // Не номер серии — «ФУЛЛ» и «NEW!» показываются акцентной плашкой.
+  const accent = notification.kind !== "episode";
 
   return (
     <>
@@ -151,12 +156,12 @@ function NotificationRow({
         <span
           className={cn(
             "shrink-0 rounded-sm px-3 py-1 font-medium text-2xl tabular-nums",
-            completed
+            accent
               ? "bg-accent text-accent-fg tracking-kicker"
               : "bg-surface-2 text-fg",
           )}
         >
-          {completed ? "ФУЛЛ" : notification.episodeNumber}
+          {notificationBadge(notification)}
         </span>
       </div>
     </>

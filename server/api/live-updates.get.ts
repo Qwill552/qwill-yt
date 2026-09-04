@@ -2,6 +2,7 @@ import { defineHandler } from "nitro";
 import {
   getRecentNotifications,
   getSubscribedIds,
+  getWishlist,
   toNotificationPayload,
 } from "../lib/anime-tracking-store";
 import { subscribeLive, type LiveEvent } from "../lib/live-bus";
@@ -33,14 +34,16 @@ export default defineHandler(async (event) => {
       };
 
       try {
-        const [notifications, subscribedIds] = await Promise.all([
+        const [notifications, subscribedIds, wishlist] = await Promise.all([
           getRecentNotifications(),
           getSubscribedIds(),
+          getWishlist(),
         ]);
         send(
           sseFrame("sync", {
             notifications: notifications.map(toNotificationPayload),
             subscribedIds,
+            wishlist,
           }),
         );
       } catch (err) {

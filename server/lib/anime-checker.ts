@@ -1,6 +1,7 @@
 import {
   fetchAnimegoHtml,
   parseAnimegoEpisodes,
+  parseAnimegoRelease,
   parseAnimegoStatus,
   parseLatestEpisode,
 } from "../../src/lib/animego.functions";
@@ -8,6 +9,7 @@ import { availableEpisodes } from "../../src/lib/animego";
 import {
   applyCheckFailure,
   applyCheckResult,
+  cleanupAiredWishlist,
   cleanupOldNotifications,
   getDueAnime,
   toNotificationPayload,
@@ -15,6 +17,7 @@ import {
   type CheckResult,
 } from "./anime-tracking-store";
 import { publish } from "./live-bus";
+import { publishWishlist } from "./wishlist-events";
 
 const BATCH_SIZE = 5;
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -41,17 +44,24 @@ export async function recordCheckResult(
   if (notification) {
     publish({ type: "notification", notification: toNotificationPayload(notification) });
   }
+
+  // Проверка вишлист-строки могла и сдвинуть дату выхода, и объявить старт —
+  // панель во всех открытых вкладках должна это увидеть.
+  if (row.wishlist) await publishWishlist();
 }
 
 function parseCheckResult(html: string): CheckResult {
   const episodesRaw = parseAnimegoEpisodes(html);
   const latest = parseLatestEpisode(html);
+  const release = parseAnimegoRelease(html);
   return {
     status: parseAnimegoStatus(html),
     episodesRaw,
     episodesAvailable: availableEpisodes(episodesRaw),
     latestEpisodeNumber: latest?.number ?? null,
     latestEpisodeTitle: latest?.title ?? null,
+    releaseDate: release.date,
+    releaseRaw: release.raw,
   };
 }
 
@@ -79,6 +89,7 @@ async function runPass(): Promise<void> {
       await checkOne(row);
     }
     await cleanupOldNotifications();
+    if ((await cleanupAiredWishlist()) > 0) await publishWishlist();
   } catch (err) {
     // A DB hiccup (unreachable Postgres, mid-deploy restart) must not kill
     // the interval — the next pass just retries.

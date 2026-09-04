@@ -323,7 +323,10 @@
         const ok = res.status >= 200 && res.status < 300;
         const body = (res.responseText || "").slice(0, 200);
         console.log(LOG, "ingest", res.status, body);
-        done(ok, ok ? "" : describeError(res.status, body));
+        // Ещё не вышедшее аниме сервер кладёт в вишлист, а не в очередь —
+        // он сообщает об этом флагом в ответе.
+        const wishlist = ok && /"wishlist"\s*:\s*true/.test(body);
+        done(ok, ok ? "" : describeError(res.status, body), wishlist);
       },
       onerror: (err) => {
         console.error(LOG, "ingest failed", err);
@@ -790,6 +793,10 @@
       (ld.name || "").trim();
     if (!title) return null;
 
+    // Статус и график серий нужны серверу, чтобы понять, вышло ли аниме:
+    // ещё не вышедшее он кладёт в вишлист, а не создаёт карточку.
+    const latest = agLatestEpisodeIn(document);
+
     return {
       source: "animego",
       url: location.origin + location.pathname,
@@ -798,6 +805,8 @@
       thumbnail: agPoster() || (ld.image || "") || "",
       episodes: agText("Эпизоды"),
       publishedAt: ld.datePublished || agText("Выпуск") || null,
+      status: agText("Статус"),
+      latestEpisodeNumber: latest ? latest.number : null,
     };
   }
 
@@ -900,9 +909,12 @@
         payload.priority = entry.priority;
         setStatus("Отправляю…", "text-body-tertiary");
 
-        sendPayload(payload, (ok, reason) => {
+        sendPayload(payload, (ok, reason, wishlist) => {
           if (ok) {
-            setStatus("Добавлено в очередь", "text-success");
+            setStatus(
+              wishlist ? "Ещё не вышло — в вишлисте" : "Добавлено в очередь",
+              "text-success",
+            );
             window.clearTimeout(resetTimer);
             resetTimer = window.setTimeout(() => {
               setOpen(false);

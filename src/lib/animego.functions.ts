@@ -12,6 +12,12 @@ export type AnimegoMeta = {
   /** «19 / 24», «8 / ?», «24» — как на сайте */
   episodes: string | null;
   publishedAt: string | null;
+  /** сырой текст поля «Выпуск»/«Сезон» — у анонсов там бывает только сезон */
+  releaseRaw: string | null;
+  /** поле «Статус»: «Анонс», «Онгоинг», «Вышел» */
+  status: string | null;
+  /** номер последней вышедшей серии — `null` у того, что ещё не начиналось */
+  latestEpisodeNumber: number | null;
 };
 
 const FETCH_HEADERS = {
@@ -218,6 +224,23 @@ export function parseAnimegoEpisodes(html: string): string | null {
   return fieldValue(html, "Эпизоды");
 }
 
+/**
+ * Дата выхода первой серии — разобранная и сырая. У анонсов точной даты часто
+ * нет («весна 2026»), а по мере приближения она уточняется, поэтому фоновая
+ * проверка перечитывает поле вместе со всем остальным.
+ */
+export function parseAnimegoRelease(html: string): {
+  date: string | null;
+  raw: string | null;
+} {
+  const release = fieldValue(html, "Выпуск");
+  const season = fieldValue(html, "Сезон");
+  return {
+    date: parseAnimegoDate(release) ?? parseAnimegoDate(season),
+    raw: release ?? season,
+  };
+}
+
 const SCHEDULE_START = "schedule-episodes-table__tbody";
 const SCHEDULE_END = "schedule-episodes__read-more";
 const RELEASED_MARK = "icon-link text-success";
@@ -278,10 +301,13 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
 
   const studio = fieldLinks(html, "Студия") ?? "AnimeGO";
   const episodes = fieldValue(html, "Эпизоды");
+  const release = fieldValue(html, "Выпуск");
+  const season = fieldValue(html, "Сезон");
+  const releaseRaw = release ?? season;
   const publishedAt =
     parseAnimegoDate(ld?.datePublished) ??
-    parseAnimegoDate(fieldValue(html, "Выпуск")) ??
-    parseAnimegoDate(fieldValue(html, "Сезон"));
+    parseAnimegoDate(release) ??
+    parseAnimegoDate(season);
 
   if (!thumbnail && title === "Аниме") {
     throw new Error("Страница AnimeGO не распознана");
@@ -295,6 +321,9 @@ export async function resolveAnimegoMeta(url: string): Promise<AnimegoMeta> {
     thumbnail,
     episodes,
     publishedAt,
+    releaseRaw,
+    status: parseAnimegoStatus(html),
+    latestEpisodeNumber: parseLatestEpisode(html)?.number ?? null,
   };
 }
 
