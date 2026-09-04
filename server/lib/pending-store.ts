@@ -9,6 +9,8 @@ export type PendingItem = {
   title: string;
   /** канал YouTube или студия-аниматор */
   channel: string;
+  /** ссылка на канал YouTube — только для source: "youtube" */
+  channelUrl?: string | null;
   thumbnail: string;
   durationSeconds: number | null;
   /** «9 / 14» — только для аниме */

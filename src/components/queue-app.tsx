@@ -39,6 +39,7 @@ type PendingIngestItem = {
   url: string;
   title: string;
   channel: string;
+  channelUrl?: string | null;
   thumbnail: string;
   durationSeconds: number | null;
   episodes?: string | null;
@@ -84,6 +85,7 @@ export function QueueApp() {
             url: item.url,
             title: item.title,
             channel: item.channel,
+            channelUrl: item.channelUrl ?? null,
             durationSeconds: item.durationSeconds,
             episodes: item.episodes ?? null,
             watchedEpisodes: 0,
@@ -164,6 +166,7 @@ export function QueueApp() {
         url: meta.url,
         title: meta.title,
         channel: meta.studio,
+        channelUrl: null,
         durationSeconds: null,
         episodes: meta.episodes,
         watchedEpisodes: 0,
@@ -220,6 +223,7 @@ export function QueueApp() {
           url: watchUrl(videoId),
           title: "Видео YouTube",
           channel: "YouTube",
+          channelUrl: null,
           thumbnail: thumbnailUrl(videoId, "hq"),
           durationSeconds: null,
           publishedAt: null,
@@ -231,6 +235,7 @@ export function QueueApp() {
         url: meta.url,
         title: meta.title,
         channel: meta.channel,
+        channelUrl: meta.channelUrl,
         durationSeconds: meta.durationSeconds,
         episodes: null,
         watchedEpisodes: 0,

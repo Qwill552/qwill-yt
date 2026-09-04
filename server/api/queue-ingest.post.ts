@@ -80,6 +80,7 @@ export default defineHandler(async (event) => {
     url: watchUrl(videoId),
     title: "Видео YouTube",
     channel: "YouTube",
+    channelUrl: null,
     thumbnail: thumbnailUrl(videoId, "hq"),
     durationSeconds: null,
     publishedAt: null,

@@ -1,12 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { extractVideoId, thumbnailUrl, watchUrl } from "./youtube";
+import { channelUrl, extractVideoId, thumbnailUrl, watchUrl } from "./youtube";
 
 export type YoutubeMeta = {
   videoId: string;
   url: string;
   title: string;
   channel: string;
+  channelUrl: string | null;
   thumbnail: string;
   durationSeconds: number | null;
   publishedAt: string | null;
@@ -131,6 +132,7 @@ async function fetchInnertubePlayer(
 ): Promise<{
   title: string | null;
   channel: string | null;
+  channelId: string | null;
   durationSeconds: number | null;
   publishedAt: string | null;
 } | null> {
@@ -151,6 +153,7 @@ async function fetchInnertubePlayer(
     videoDetails?: {
       title?: string;
       author?: string;
+      channelId?: string;
       lengthSeconds?: string | number;
     };
     microformat?: {
@@ -160,6 +163,7 @@ async function fetchInnertubePlayer(
         lengthSeconds?: string | number;
         title?: { simpleText?: string };
         ownerChannelName?: string;
+        externalChannelId?: string;
       };
     };
   };
@@ -173,6 +177,7 @@ async function fetchInnertubePlayer(
   return {
     title: details?.title || micro?.title?.simpleText || null,
     channel: details?.author || micro?.ownerChannelName || null,
+    channelId: details?.channelId || micro?.externalChannelId || null,
     durationSeconds,
     publishedAt: firstDate(micro?.publishDate, micro?.uploadDate),
   };
@@ -228,6 +233,7 @@ async function fetchInnertubeNext(videoId: string): Promise<{
 async function fetchOembed(videoId: string): Promise<{
   title: string;
   author_name: string;
+  author_url?: string;
   thumbnail_url?: string;
 } | null> {
   const data = await fetchJson(
@@ -239,12 +245,14 @@ async function fetchOembed(videoId: string): Promise<{
   const rec = data as {
     title?: string;
     author_name?: string;
+    author_url?: string;
     thumbnail_url?: string;
   };
   if (!rec.title && !rec.author_name) return null;
   return {
     title: rec.title || "Видео YouTube",
     author_name: rec.author_name || "YouTube",
+    author_url: rec.author_url,
     thumbnail_url: rec.thumbnail_url,
   };
 }
@@ -345,6 +353,8 @@ export async function resolveYoutubeMeta(url: string): Promise<YoutubeMeta> {
     oembed?.title || android?.title || mweb?.title || next?.title || "Видео YouTube";
   const channel =
     oembed?.author_name || android?.channel || mweb?.channel || "YouTube";
+  const channelId = android?.channelId || mweb?.channelId || null;
+  const resolvedChannelUrl = oembed?.author_url || (channelId ? channelUrl(channelId) : null);
   const thumbnail = oembed?.thumbnail_url || thumbnailUrl(videoId, "hq");
 
   if (!oembed && !android && !mweb && !next) {
@@ -356,6 +366,7 @@ export async function resolveYoutubeMeta(url: string): Promise<YoutubeMeta> {
     url: watchUrl(videoId),
     title,
     channel,
+    channelUrl: resolvedChannelUrl,
     thumbnail,
     durationSeconds,
     publishedAt,

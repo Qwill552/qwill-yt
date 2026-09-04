@@ -49,6 +49,10 @@ export function watchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
+export function channelUrl(channelId: string): string {
+  return `https://www.youtube.com/channel/${channelId}`;
+}
+
 export function thumbnailUrl(videoId: string, quality: "max" | "hq" = "hq"): string {
   const file = quality === "max" ? "maxresdefault.jpg" : "hqdefault.jpg";
   return `https://i.ytimg.com/vi/${videoId}/${file}`;

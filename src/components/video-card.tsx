@@ -138,7 +138,18 @@ export function VideoCard({
             )}
           </h3>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted text-sm">
-            <span className="max-w-full truncate">{video.channel}</span>
+            {!isAnime && video.channelUrl ? (
+              <a
+                href={video.channelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="max-w-full truncate transition-colors duration-150 hover:text-accent focus-visible:text-accent"
+              >
+                {video.channel}
+              </a>
+            ) : (
+              <span className="max-w-full truncate">{video.channel}</span>
+            )}
             {published ? (
               <span className="inline-flex items-center gap-1 text-subtle">
                 <Calendar className="size-3.5" strokeWidth={1.75} />

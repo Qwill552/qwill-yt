@@ -22,6 +22,8 @@ export type QueueVideo = {
   title: string;
   /** канал YouTube или студия-аниматор */
   channel: string;
+  /** ссылка на канал YouTube — только для source: "youtube" */
+  channelUrl: string | null;
   durationSeconds: number | null;
   /** количество серий для аниме: «19 / 24», «52» */
   episodes: string | null;
@@ -56,6 +58,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("jNQXAC9IVRw"),
     title: "Me at the zoo",
     channel: "jawed",
+    channelUrl: null,
     durationSeconds: 19,
     episodes: null,
     watchedEpisodes: 0,
@@ -71,6 +74,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("DHjqpvDnNGE"),
     title: "JavaScript in 100 Seconds",
     channel: "Fireship",
+    channelUrl: null,
     durationSeconds: 148,
     episodes: null,
     watchedEpisodes: 0,
@@ -86,6 +90,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("aqz-KE-bpKQ"),
     title: "Big Buck Bunny 60fps 4K — Official Blender Foundation Short Film",
     channel: "Blender",
+    channelUrl: null,
     durationSeconds: 635,
     episodes: null,
     watchedEpisodes: 0,
@@ -101,6 +106,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("kJQP7kiw5Fk"),
     title: "Luis Fonsi — Despacito ft. Daddy Yankee",
     channel: "LuisFonsiVEVO",
+    channelUrl: null,
     durationSeconds: 282,
     episodes: null,
     watchedEpisodes: 0,
@@ -116,6 +122,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("9bZkp7q19f0"),
     title: "PSY — GANGNAM STYLE M/V",
     channel: "officialpsy",
+    channelUrl: null,
     durationSeconds: 252,
     episodes: null,
     watchedEpisodes: 0,
@@ -131,6 +138,7 @@ const SEED: QueueVideo[] = [
     url: watchUrl("dQw4w9WgXcQ"),
     title: "Rick Astley — Never Gonna Give You Up (Official Video) (4K Remaster)",
     channel: "Rick Astley",
+    channelUrl: null,
     durationSeconds: 213,
     episodes: null,
     watchedEpisodes: 0,
@@ -180,7 +188,7 @@ export const useQueue = create<QueueState>()(
     {
       name: "ochered-queue",
       skipHydration: true,
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const state = persisted as { videos?: QueueVideo[] };
         if (state?.videos) {
@@ -190,6 +198,7 @@ export const useQueue = create<QueueState>()(
             source: video.source ?? "youtube",
             episodes: video.episodes ?? null,
             watchedEpisodes: video.watchedEpisodes ?? 0,
+            channelUrl: video.channelUrl ?? null,
           }));
         }
         return state;
