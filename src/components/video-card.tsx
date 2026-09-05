@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bell, Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import {
-  ThumbnailPreviewLayer,
+  ThumbnailPreviewFrame,
   useThumbnailPreview,
 } from "@/components/video-preview";
 import { Button } from "@/components/ui/button";
@@ -93,19 +93,20 @@ export function VideoCard({
             <Tv className="size-8 text-subtle" strokeWidth={1.5} />
           </div>
         )}
-        {preview.active && preview.storyboard ? (
-          <ThumbnailPreviewLayer
-            storyboard={preview.storyboard}
-            frame={preview.frame}
-          />
-        ) : null}
-        <span className="pointer-events-none absolute inset-0 bg-linear-to-t from-bg/70 via-transparent to-transparent opacity-80" />
+        <ThumbnailPreviewFrame preview={preview} />
+        <span
+          className={cn(
+            "pointer-events-none absolute inset-0 bg-linear-to-t from-bg/70 via-transparent to-transparent transition-opacity duration-200",
+            // Во время предпросмотра затемнение снизу только мешает картинке.
+            preview.playing ? "opacity-0" : "opacity-80",
+          )}
+        />
         <span
           className={cn(
             "pointer-events-none absolute inset-0 flex items-center justify-center",
             "opacity-0 transition-opacity duration-150 ease-out",
             // Во время предпросмотра кнопка уходит, как на YouTube.
-            preview.active
+            preview.playing
               ? ""
               : "group-hover:opacity-100 group-focus-visible:opacity-100",
           )}

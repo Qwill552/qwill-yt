@@ -1,26 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
-import type { Storyboard } from "@/lib/youtube";
-import { fetchYoutubeStoryboard } from "@/lib/youtube.functions";
+import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
+import { cn } from "@/lib/utils";
 
-/** 8 кадров в секунду — примерно как беглая перемотка на YouTube. */
-const FRAME_MS = 125;
-/** Столько курсор должен простоять на превью, чтобы предпросмотр запустился. */
+/** Столько курсор должен простоять на превью, чтобы плеер начал грузиться. */
 const HOVER_DELAY_MS = 400;
-/** За сколько кадров до конца листа начинаем тянуть следующий. */
-const SHEET_LOOKAHEAD = 5;
+/** Не заиграло за это время — считаем, что видео встраивать нельзя. */
+const START_TIMEOUT_MS = 3000;
+/** Состояние плеера YouTube: 1 — играет. */
+const PLAYER_STATE_PLAYING = 1;
 
-/** Раскадровку по видео просим один раз на вкладку. */
-const storyboardRequests = new Map<string, Promise<Storyboard | null>>();
-
-function loadStoryboard(videoId: string): Promise<Storyboard | null> {
-  let request = storyboardRequests.get(videoId);
-  if (!request) {
-    request = fetchYoutubeStoryboard({ data: { videoId } }).catch(() => null);
-    storyboardRequests.set(videoId, request);
-  }
-  return request;
-}
+/** Сколько раз плеер не завёлся: одна осечка может быть просто медленной
+ *  сетью, поэтому сдаёмся только после второй. */
+const failedStarts = new Map<string, number>();
+const MAX_FAILED_STARTS = 2;
 
 /** Только мышь и только если пользователь не просил меньше движения. */
 function previewAllowed(): boolean {
@@ -33,186 +25,223 @@ function previewAllowed(): boolean {
   return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function playerSrc(videoId: string): string {
+  const params = new URLSearchParams({
+    autoplay: "1",
+    mute: "1",
+    controls: "0",
+    disablekb: "1",
+    fs: "0",
+    modestbranding: "1",
+    rel: "0",
+    playsinline: "1",
+    iv_load_policy: "3",
+    enablejsapi: "1",
+    // Зациклить одиночное видео можно только через плейлист из него самого.
+    loop: "1",
+    playlist: videoId,
+    origin: window.location.origin,
+  });
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+}
+
 export type ThumbnailPreview = {
-  storyboard: Storyboard | null;
-  frame: number;
-  active: boolean;
+  /** Ссылка на плеер, пока идёт наведение; null — iframe размонтирован. */
+  src: string | null;
+  /** Видео реально пошло: обложку можно прятать, кнопку Play убирать. */
+  playing: boolean;
+  /** Доля просмотренного, 0…1 — для тонкой полосы прогресса. */
+  progress: number;
+  iframeRef: RefObject<HTMLIFrameElement | null>;
+  onIframeLoad: () => void;
   onPointerEnter: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerLeave: () => void;
 };
 
 /**
- * Предпросмотр кадров при наведении на превью: ждём 400 мс, тянем раскадровку,
- * прокручиваем кадры по всему видео. Спрайт-листы грузятся по мере надобности,
- * на незагруженный лист не перескакиваем.
+ * Предпросмотр при наведении мышью на превью: через 400 мс поверх обложки
+ * монтируется беззвучный плеер YouTube и играет настоящее видео — как на
+ * главной YouTube. Обложка остаётся видна, пока плеер не заиграет; если он не
+ * завёлся за 3 секунды (видео запрещено встраивать), откатываемся к обложке.
  */
 export function useThumbnailPreview(
   videoId: string,
   enabled: boolean,
 ): ThumbnailPreview {
-  const [storyboard, setStoryboard] = useState<Storyboard | null>(null);
-  const [frame, setFrame] = useState(0);
-  const [active, setActive] = useState(false);
+  const [src, setSrc] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
 
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const videoIdRef = useRef(videoId);
+  videoIdRef.current = videoId;
   const hovering = useRef(false);
   const hoverTimer = useRef<number | null>(null);
-  const loadedSheets = useRef(new Set<number>());
-  const sheetLoads = useRef(new Map<number, Promise<boolean>>());
+  const startTimer = useRef<number | null>(null);
 
-  useEffect(() => {
-    loadedSheets.current = new Set();
-    sheetLoads.current = new Map();
-    setStoryboard(null);
-    setFrame(0);
-    setActive(false);
-  }, [videoId]);
-
-  const loadSheet = useCallback((board: Storyboard, index: number) => {
-    const sheet = board.sheets[index];
-    if (!sheet) return Promise.resolve(false);
-    if (loadedSheets.current.has(index)) return Promise.resolve(true);
-
-    let pending = sheetLoads.current.get(index);
-    if (!pending) {
-      pending = new Promise<boolean>((resolve) => {
-        const image = new Image();
-        image.onload = () => {
-          loadedSheets.current.add(index);
-          resolve(true);
-        };
-        image.onerror = () => {
-          // Даём шанс повторить попытку при следующем наведении.
-          sheetLoads.current.delete(index);
-          resolve(false);
-        };
-        image.src = sheet.url;
-      });
-      sheetLoads.current.set(index, pending);
-    }
-    return pending;
-  }, []);
-
-  const start = useCallback(async () => {
-    const board = await loadStoryboard(videoId);
-    if (!board || !hovering.current) return;
-    const ready = await loadSheet(board, 0);
-    if (!ready || !hovering.current) return;
-    setStoryboard(board);
-    setFrame(0);
-    setActive(true);
-  }, [loadSheet, videoId]);
-
-  const onPointerEnter = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      if (!enabled || event.pointerType !== "mouse") return;
-      if (!previewAllowed()) return;
-      hovering.current = true;
-      if (hoverTimer.current != null) window.clearTimeout(hoverTimer.current);
-      hoverTimer.current = window.setTimeout(() => {
-        hoverTimer.current = null;
-        void start();
-      }, HOVER_DELAY_MS);
-    },
-    [enabled, start],
-  );
-
-  const onPointerLeave = useCallback(() => {
-    hovering.current = false;
+  const stop = useCallback(() => {
     if (hoverTimer.current != null) {
       window.clearTimeout(hoverTimer.current);
       hoverTimer.current = null;
     }
-    setActive(false);
-    setFrame(0);
+    if (startTimer.current != null) {
+      window.clearTimeout(startTimer.current);
+      startTimer.current = null;
+    }
+    setSrc(null);
+    setPlaying(false);
+    setProgress(0);
   }, []);
+
+  useEffect(() => {
+    hovering.current = false;
+    stop();
+  }, [stop, videoId]);
 
   useEffect(() => {
     return () => {
       hovering.current = false;
       if (hoverTimer.current != null) window.clearTimeout(hoverTimer.current);
+      if (startTimer.current != null) window.clearTimeout(startTimer.current);
     };
   }, []);
 
+  const onPointerEnter = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (!enabled || event.pointerType !== "mouse") return;
+      if ((failedStarts.get(videoId) ?? 0) >= MAX_FAILED_STARTS) return;
+      if (!previewAllowed()) return;
+      hovering.current = true;
+      if (hoverTimer.current != null) window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = window.setTimeout(() => {
+        hoverTimer.current = null;
+        if (!hovering.current) return;
+        setSrc(playerSrc(videoId));
+        startTimer.current = window.setTimeout(() => {
+          startTimer.current = null;
+          // Плеер так и не заиграл — откатываемся к обложке.
+          failedStarts.set(videoId, (failedStarts.get(videoId) ?? 0) + 1);
+          setSrc(null);
+          setPlaying(false);
+        }, START_TIMEOUT_MS);
+      }, HOVER_DELAY_MS);
+    },
+    [enabled, videoId],
+  );
+
+  const onPointerLeave = useCallback(() => {
+    hovering.current = false;
+    stop();
+  }, [stop]);
+
+  /** Плеер отвечает на «listening» потоком сообщений о своём состоянии. */
+  const onIframeLoad = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "listening", id: videoId }),
+      "*",
+    );
+  }, [videoId]);
+
   useEffect(() => {
-    if (!active || !storyboard) return;
+    if (!src) return;
 
-    let raf = 0;
-    let current = 0;
-    let last = performance.now();
+    const onMessage = (event: MessageEvent) => {
+      const frame = iframeRef.current;
+      if (!frame || event.source !== frame.contentWindow) return;
+      if (typeof event.data !== "string") return;
 
-    const step = (now: number) => {
-      raf = window.requestAnimationFrame(step);
-      if (now - last < FRAME_MS) return;
-
-      const next = (current + 1) % storyboard.frameCount;
-      const sheetIndex = Math.floor(next / storyboard.perSheet);
-      if (!loadedSheets.current.has(sheetIndex)) {
-        // Лист ещё едет — стоим на текущем кадре, а не мигаем пустотой.
-        void loadSheet(storyboard, sheetIndex);
-        return;
+      // `onStateChange` приносит состояние числом, `infoDelivery` — объектом
+      // с currentTime и duration. Нас устраивают обе формы.
+      let payload: {
+        event?: string;
+        info?:
+          | number
+          | { playerState?: number; currentTime?: number; duration?: number };
+      };
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return; // не сообщение плеера
       }
 
-      last = now;
-      current = next;
-      setFrame(next);
+      const info = payload.info;
+      const state =
+        typeof info === "number"
+          ? info
+          : typeof info === "object" && info
+            ? info.playerState
+            : undefined;
 
-      const lookahead = Math.floor(
-        ((next + SHEET_LOOKAHEAD) % storyboard.frameCount) / storyboard.perSheet,
-      );
-      if (lookahead !== sheetIndex) void loadSheet(storyboard, lookahead);
+      if (state === PLAYER_STATE_PLAYING) {
+        failedStarts.delete(videoIdRef.current);
+        if (startTimer.current != null) {
+          window.clearTimeout(startTimer.current);
+          startTimer.current = null;
+        }
+        setPlaying(true);
+      }
+
+      if (typeof info !== "object" || !info) return;
+      const { currentTime, duration } = info;
+      if (
+        typeof currentTime === "number" &&
+        typeof duration === "number" &&
+        duration > 0
+      ) {
+        setProgress(Math.min(currentTime / duration, 1));
+      }
     };
 
-    raf = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(raf);
-  }, [active, loadSheet, storyboard]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [src]);
 
-  return { storyboard, frame, active, onPointerEnter, onPointerLeave };
+  return {
+    src,
+    playing,
+    progress,
+    iframeRef,
+    onIframeLoad,
+    onPointerEnter,
+    onPointerLeave,
+  };
 }
 
-type ThumbnailPreviewLayerProps = {
-  storyboard: Storyboard;
-  frame: number;
+type ThumbnailPreviewFrameProps = {
+  preview: ThumbnailPreview;
 };
 
 /**
- * Кадр рисуется одним фоном по спрайт-листу. Последний лист обрезан по числу
- * оставшихся кадров, поэтому масштаб берём из сетки конкретного листа.
+ * Плеер поверх обложки. Пока видео не пошло, слой прозрачный — плеер уже
+ * грузится, но пользователь видит обычную картинку, без чёрного провала.
  */
-export function ThumbnailPreviewLayer({
-  storyboard,
-  frame,
-}: ThumbnailPreviewLayerProps) {
-  const sheetIndex = Math.floor(frame / storyboard.perSheet);
-  const sheet = storyboard.sheets[sheetIndex];
-  if (!sheet) return null;
-
-  const local = frame % storyboard.perSheet;
-  const column = local % storyboard.columns;
-  const row = Math.floor(local / storyboard.columns);
-  const x = sheet.columns > 1 ? (column / (sheet.columns - 1)) * 100 : 0;
-  const y = sheet.rows > 1 ? (row / (sheet.rows - 1)) * 100 : 0;
-  const progress = ((frame + 1) / storyboard.frameCount) * 100;
+export function ThumbnailPreviewFrame({ preview }: ThumbnailPreviewFrameProps) {
+  if (!preview.src) return null;
 
   return (
-    <>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-surface-2 bg-no-repeat"
-        style={{
-          backgroundImage: `url("${sheet.url}")`,
-          backgroundSize: `${sheet.columns * 100}% ${sheet.rows * 100}%`,
-          backgroundPosition: `${x}% ${y}%`,
-        }}
+    <span
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none absolute inset-0 bg-bg transition-opacity duration-200 ease-out",
+        preview.playing ? "opacity-100" : "opacity-0",
+      )}
+    >
+      <iframe
+        ref={preview.iframeRef}
+        src={preview.src}
+        title="Предпросмотр видео"
+        tabIndex={-1}
+        allow="autoplay; encrypted-media"
+        referrerPolicy="strict-origin-when-cross-origin"
+        onLoad={preview.onIframeLoad}
+        className="h-full w-full border-0"
       />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-fg/20"
-      >
+      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-fg/20">
         <span
           className="block h-full bg-accent"
-          style={{ width: `${progress}%` }}
+          style={{ width: `${preview.progress * 100}%` }}
         />
       </span>
-    </>
+    </span>
   );
 }
