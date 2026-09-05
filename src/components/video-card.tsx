@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bell, Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
 import {
-  ThumbnailPreviewFrame,
+  ThumbnailPreviewImage,
   useThumbnailPreview,
 } from "@/components/video-preview";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ export function VideoCard({
   const titleRef = useRef<HTMLHeadingElement>(null);
   const [titleTruncated, setTitleTruncated] = useState(false);
   const isAnime = video.source === "animego";
-  const preview = useThumbnailPreview(video.id, !isAnime);
+  const preview = useThumbnailPreview(video.id, video.title, !isAnime);
   const duration = formatDuration(video.durationSeconds);
   const available = availableEpisodes(video.episodes);
   const watched = clampWatched(video.watchedEpisodes, available);
@@ -93,12 +93,12 @@ export function VideoCard({
             <Tv className="size-8 text-subtle" strokeWidth={1.5} />
           </div>
         )}
-        <ThumbnailPreviewFrame preview={preview} />
+        <ThumbnailPreviewImage preview={preview} />
         <span
           className={cn(
             "pointer-events-none absolute inset-0 bg-linear-to-t from-bg/70 via-transparent to-transparent transition-opacity duration-200",
             // Во время предпросмотра затемнение снизу только мешает картинке.
-            preview.playing ? "opacity-0" : "opacity-80",
+            preview.src ? "opacity-0" : "opacity-80",
           )}
         />
         <span
@@ -106,7 +106,7 @@ export function VideoCard({
             "pointer-events-none absolute inset-0 flex items-center justify-center",
             "opacity-0 transition-opacity duration-150 ease-out",
             // Во время предпросмотра кнопка уходит, как на YouTube.
-            preview.playing
+            preview.src
               ? ""
               : "group-hover:opacity-100 group-focus-visible:opacity-100",
           )}

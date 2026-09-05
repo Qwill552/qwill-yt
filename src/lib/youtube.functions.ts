@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { channelUrl, extractVideoId, thumbnailUrl, watchUrl } from "./youtube";
+import {
+  channelUrl,
+  extractVideoId,
+  isYoutubeId,
+  thumbnailUrl,
+  watchUrl,
+} from "./youtube";
 
 export type YoutubeMeta = {
   videoId: string;
@@ -383,4 +389,134 @@ export const fetchYoutubePublishedAt = createServerFn({ method: "POST" })
   .validator(z.object({ videoId: z.string().min(1) }))
   .handler(async ({ data }): Promise<string | null> => {
     return resolvePublishedAt(data.videoId);
+  });
+
+/**
+ * Анимированная превьюшка (`an_webp`) — ровно то, что YouTube крутит при
+ * наведении у себя на главной: ~3 секунды монтажа из видео, 320×180, около
+ * 100 КБ. Других размеров у неё нет, `hqdefault_6s` и крупнее отдают 404.
+ *
+ * Ссылка подписана (`sqp`/`rs`) и живёт недолго, поэтому держим её только в
+ * памяти сервера. И главное: YouTube кладёт `richThumbnail` в ответ только под
+ * полноценным Chrome-овским User-Agent — тем, что лежит в FETCH_HEADERS.
+ */
+const ANIMATED_TTL_MS = 6 * 60 * 60 * 1000;
+const ANIMATED_CACHE_LIMIT = 300;
+
+type AnimatedCacheEntry = { value: string | null; expiresAt: number };
+
+const animatedCache = new Map<string, AnimatedCacheEntry>();
+const animatedInFlight = new Map<string, Promise<string | null>>();
+
+function pruneAnimatedCache(now: number) {
+  if (animatedCache.size <= ANIMATED_CACHE_LIMIT) return;
+  for (const [videoId, entry] of animatedCache) {
+    if (entry.expiresAt <= now) animatedCache.delete(videoId);
+  }
+  // Всё ещё много — выкидываем самые старые (Map хранит порядок вставки).
+  for (const videoId of animatedCache.keys()) {
+    if (animatedCache.size <= ANIMATED_CACHE_LIMIT) break;
+    animatedCache.delete(videoId);
+  }
+}
+
+type MovingThumbnailNode = {
+  videoId?: unknown;
+  richThumbnail?: {
+    movingThumbnailRenderer?: {
+      movingThumbnailDetails?: { thumbnails?: Array<{ url?: unknown }> };
+    };
+  };
+};
+
+function collectAnimatedThumbnails(
+  node: unknown,
+  out: Map<string, string>,
+): Map<string, string> {
+  if (Array.isArray(node)) {
+    for (const item of node) collectAnimatedThumbnails(item, out);
+    return out;
+  }
+  if (!node || typeof node !== "object") return out;
+
+  const rec = node as MovingThumbnailNode;
+  const videoId = rec.videoId;
+  const url =
+    rec.richThumbnail?.movingThumbnailRenderer?.movingThumbnailDetails
+      ?.thumbnails?.[0]?.url;
+  if (typeof videoId === "string" && typeof url === "string") {
+    out.set(videoId, url);
+  }
+
+  for (const value of Object.values(node)) {
+    collectAnimatedThumbnails(value, out);
+  }
+  return out;
+}
+
+async function searchAnimatedThumbnail(
+  query: string,
+  videoId: string,
+): Promise<string | null> {
+  const data = await fetchJson(
+    "https://www.youtube.com/youtubei/v1/search?prettyPrint=false",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...FETCH_HEADERS },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240101.00.00",
+            hl: "en",
+            gl: "US",
+          },
+        },
+        query,
+      }),
+    },
+    8000,
+  );
+  if (!data) return null;
+  return collectAnimatedThumbnails(data, new Map()).get(videoId) ?? null;
+}
+
+async function resolveAnimatedThumbnail(
+  videoId: string,
+  title: string | null,
+): Promise<string | null> {
+  const cached = animatedCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const pending = animatedInFlight.get(videoId);
+  if (pending) return pending;
+
+  const task = (async () => {
+    // Поиск по самому id срабатывает не всегда — тогда идём по названию.
+    let url = await searchAnimatedThumbnail(videoId, videoId);
+    if (!url && title) url = await searchAnimatedThumbnail(title, videoId);
+    const expiresAt = Date.now() + ANIMATED_TTL_MS;
+    animatedCache.set(videoId, { value: url, expiresAt });
+    pruneAnimatedCache(expiresAt);
+    return url;
+  })();
+
+  animatedInFlight.set(videoId, task);
+  try {
+    return await task;
+  } finally {
+    animatedInFlight.delete(videoId);
+  }
+}
+
+export const fetchYoutubeAnimatedThumbnail = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      videoId: z.string().min(1),
+      title: z.string().max(300).optional(),
+    }),
+  )
+  .handler(async ({ data }): Promise<string | null> => {
+    if (!isYoutubeId(data.videoId)) return null;
+    return resolveAnimatedThumbnail(data.videoId, data.title ?? null);
   });
