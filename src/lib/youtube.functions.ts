@@ -1,6 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { channelUrl, extractVideoId, thumbnailUrl, watchUrl } from "./youtube";
+import {
+  channelUrl,
+  extractVideoId,
+  isYoutubeId,
+  parseStoryboardSpec,
+  thumbnailUrl,
+  watchUrl,
+} from "./youtube";
+import type { Storyboard } from "./youtube";
 
 export type YoutubeMeta = {
   videoId: string;
@@ -383,4 +391,95 @@ export const fetchYoutubePublishedAt = createServerFn({ method: "POST" })
   .validator(z.object({ videoId: z.string().min(1) }))
   .handler(async ({ data }): Promise<string | null> => {
     return resolvePublishedAt(data.videoId);
+  });
+
+/**
+ * Ссылки на раскадровку подписаны и протухают, поэтому храним их только в
+ * памяти сервера и ненадолго. Одновременные запросы по одному видео
+ * склеиваются, чтобы наведение на карточку не било по YouTube пачкой.
+ */
+const STORYBOARD_TTL_MS = 60 * 60 * 1000;
+const STORYBOARD_CACHE_LIMIT = 300;
+
+type StoryboardCacheEntry = { value: Storyboard | null; expiresAt: number };
+
+const storyboardCache = new Map<string, StoryboardCacheEntry>();
+const storyboardInFlight = new Map<string, Promise<Storyboard | null>>();
+
+function pruneStoryboardCache(now: number) {
+  if (storyboardCache.size <= STORYBOARD_CACHE_LIMIT) return;
+  for (const [videoId, entry] of storyboardCache) {
+    if (entry.expiresAt <= now) storyboardCache.delete(videoId);
+  }
+  // Кэш всё ещё большой — выкидываем самые старые записи (Map хранит порядок).
+  for (const videoId of storyboardCache.keys()) {
+    if (storyboardCache.size <= STORYBOARD_CACHE_LIMIT) break;
+    storyboardCache.delete(videoId);
+  }
+}
+
+async function fetchStoryboardSpec(
+  videoId: string,
+  client: InnertubeClient,
+): Promise<string | null> {
+  const data = await fetchJson(
+    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...FETCH_HEADERS },
+      body: JSON.stringify({
+        context: { client: { hl: "en", gl: "US", ...client } },
+        videoId,
+      }),
+    },
+    5000,
+  );
+  if (!data || typeof data !== "object") return null;
+  const rec = data as {
+    storyboards?: {
+      playerStoryboardSpecRenderer?: { spec?: string };
+    };
+  };
+  return rec.storyboards?.playerStoryboardSpecRenderer?.spec ?? null;
+}
+
+async function resolveStoryboard(videoId: string): Promise<Storyboard | null> {
+  const now = Date.now();
+  const cached = storyboardCache.get(videoId);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const pending = storyboardInFlight.get(videoId);
+  if (pending) return pending;
+
+  const task = (async () => {
+    const spec =
+      (await fetchStoryboardSpec(videoId, {
+        clientName: "ANDROID",
+        clientVersion: "20.10.38",
+        androidSdkVersion: 30,
+      })) ??
+      (await fetchStoryboardSpec(videoId, {
+        clientName: "MWEB",
+        clientVersion: "2.20241201.00.00",
+      }));
+    const storyboard = parseStoryboardSpec(spec);
+    const expiresAt = Date.now() + STORYBOARD_TTL_MS;
+    storyboardCache.set(videoId, { value: storyboard, expiresAt });
+    pruneStoryboardCache(expiresAt);
+    return storyboard;
+  })();
+
+  storyboardInFlight.set(videoId, task);
+  try {
+    return await task;
+  } finally {
+    storyboardInFlight.delete(videoId);
+  }
+}
+
+export const fetchYoutubeStoryboard = createServerFn({ method: "POST" })
+  .validator(z.object({ videoId: z.string().min(1) }))
+  .handler(async ({ data }): Promise<Storyboard | null> => {
+    if (!isYoutubeId(data.videoId)) return null;
+    return resolveStoryboard(data.videoId);
   });

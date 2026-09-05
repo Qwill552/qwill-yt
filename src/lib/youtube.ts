@@ -137,3 +137,87 @@ export function probeYoutubeDuration(
     document.body.appendChild(iframe);
   });
 }
+
+/**
+ * Один спрайт-лист раскадровки. Последний лист YouTube обрезает по числу
+ * оставшихся кадров (4 кадра при сетке 5×5 приезжают как 640×90), поэтому
+ * масштаб фона считается по сетке конкретного листа, а не по общей.
+ */
+export type StoryboardSheet = {
+  url: string;
+  columns: number;
+  rows: number;
+};
+
+export type Storyboard = {
+  sheets: StoryboardSheet[];
+  /** колонок на полном листе — по ним кадры разложены построчно */
+  columns: number;
+  /** кадров на полном листе */
+  perSheet: number;
+  /** всего кадров по всему видео */
+  frameCount: number;
+  frameWidth: number;
+  frameHeight: number;
+};
+
+/** Ниже этого кадры слишком мыльные для карточки — лучше статичная обложка. */
+const MIN_STORYBOARD_FRAME_WIDTH = 80;
+
+/**
+ * Разбирает `playerStoryboardSpecRenderer.spec`:
+ * `base|уровень0|уровень1|…`, где уровень — это
+ * `ширина#высота#кадров#колонок#строк#интервал#шаблон_имени#подпись`.
+ * В базовой ссылке `$L` — номер уровня, `$N` — имя листа (`M0`, `M1`, …).
+ * Берём самый качественный уровень; ссылки подписаны и живут недолго.
+ */
+export function parseStoryboardSpec(
+  spec: string | null | undefined,
+): Storyboard | null {
+  if (!spec) return null;
+  const parts = spec.split("|");
+  const base = parts.shift();
+  if (!base || !base.includes("$L") || !base.includes("$N")) return null;
+  // У трансляций раскадровка другого формата — не трогаем.
+  if (base.includes("storyboard_live_")) return null;
+
+  let best: Storyboard | null = null;
+
+  for (let level = 0; level < parts.length; level += 1) {
+    const fields = (parts[level] ?? "").split("#");
+    if (fields.length < 8) continue;
+
+    const frameWidth = Number(fields[0]);
+    const frameHeight = Number(fields[1]);
+    const frameCount = Number(fields[2]);
+    const columns = Number(fields[3]);
+    const rows = Number(fields[4]);
+    const nameTemplate = fields[6] ?? "";
+    const sigh = fields[7] ?? "";
+
+    const numbers = [frameWidth, frameHeight, frameCount, columns, rows];
+    if (!numbers.every((value) => Number.isFinite(value) && value > 0)) continue;
+    if (!nameTemplate || !sigh) continue;
+    if (frameWidth < MIN_STORYBOARD_FRAME_WIDTH) continue;
+    if (best && best.frameWidth >= frameWidth) continue;
+
+    const perSheet = columns * rows;
+    const sheetCount = Math.ceil(frameCount / perSheet);
+    const sheets: StoryboardSheet[] = [];
+    for (let sheet = 0; sheet < sheetCount; sheet += 1) {
+      const remaining = frameCount - sheet * perSheet;
+      const url = `${base
+        .replace("$L", String(level))
+        .replace("$N", nameTemplate.replace("$M", String(sheet)))}&sigh=${sigh}`;
+      sheets.push({
+        url,
+        columns: Math.min(remaining, columns),
+        rows: Math.min(Math.ceil(remaining / columns), rows),
+      });
+    }
+
+    best = { sheets, columns, perSheet, frameCount, frameWidth, frameHeight };
+  }
+
+  return best;
+}

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Bell, Calendar, Clock, Play, Tv, Trash2 } from "lucide-react";
 import { PriorityToggle } from "@/components/priority-toggle";
+import {
+  ThumbnailPreviewLayer,
+  useThumbnailPreview,
+} from "@/components/video-preview";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { availableEpisodes, clampWatched, formatEpisodes } from "@/lib/animego";
@@ -31,6 +35,7 @@ export function VideoCard({
   const titleRef = useRef<HTMLHeadingElement>(null);
   const [titleTruncated, setTitleTruncated] = useState(false);
   const isAnime = video.source === "animego";
+  const preview = useThumbnailPreview(video.id, !isAnime);
   const duration = formatDuration(video.durationSeconds);
   const available = availableEpisodes(video.episodes);
   const watched = clampWatched(video.watchedEpisodes, available);
@@ -57,6 +62,8 @@ export function VideoCard({
         href={video.url}
         target="_blank"
         rel="noopener noreferrer"
+        onPointerEnter={preview.onPointerEnter}
+        onPointerLeave={preview.onPointerLeave}
         className="press-thumb group relative block overflow-hidden rounded-lg focus-visible:ring-2 focus-visible:ring-accent/50"
         aria-label={`Открыть «${video.title}» на ${isAnime ? "AnimeGO" : "YouTube"}`}
       >
@@ -86,11 +93,21 @@ export function VideoCard({
             <Tv className="size-8 text-subtle" strokeWidth={1.5} />
           </div>
         )}
+        {preview.active && preview.storyboard ? (
+          <ThumbnailPreviewLayer
+            storyboard={preview.storyboard}
+            frame={preview.frame}
+          />
+        ) : null}
         <span className="pointer-events-none absolute inset-0 bg-linear-to-t from-bg/70 via-transparent to-transparent opacity-80" />
         <span
           className={cn(
             "pointer-events-none absolute inset-0 flex items-center justify-center",
-            "opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100",
+            "opacity-0 transition-opacity duration-150 ease-out",
+            // Во время предпросмотра кнопка уходит, как на YouTube.
+            preview.active
+              ? ""
+              : "group-hover:opacity-100 group-focus-visible:opacity-100",
           )}
         >
           <span className="flex size-12 items-center justify-center rounded-full bg-fg/92 text-bg shadow-border">
