@@ -3,6 +3,7 @@ import { Flame, Circle, Clapperboard } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AddBar } from "@/components/add-bar";
 import { NotificationBell } from "@/components/notification-bell";
+import { SortableGrid } from "@/components/sortable-grid";
 import { TabBar } from "@/components/tab-bar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/components/theme-provider";
@@ -74,6 +75,7 @@ export function QueueApp() {
   const removeVideo = useQueue((state) => state.removeVideo);
   const setPriority = useQueue((state) => state.setPriority);
   const patchVideo = useQueue((state) => state.patchVideo);
+  const reorderVideos = useQueue((state) => state.reorderVideos);
 
   useEffect(() => {
     useQueue.persist.rehydrate();
@@ -160,11 +162,9 @@ export function QueueApp() {
       medium: [],
       low: [],
     };
+    // Порядок внутри секции ручной — он и есть порядок в сторе.
     for (const video of categoryVideos) {
       buckets[video.priority].push(video);
-    }
-    for (const key of SECTIONS) {
-      buckets[key].sort((a, b) => b.addedAt - a.addedAt);
     }
     return buckets;
   }, [categoryVideos]);
@@ -385,7 +385,7 @@ export function QueueApp() {
               Вставьте ссылку на YouTube или AnimeGO — появится карточка с
               названием, каналом или студией, длительностью или числом серий
               и датой выхода. Сортировка всегда от важного к тому, что можно
-              отложить.
+              отложить, а внутри раздела карточки можно перетаскивать за фон.
             </p>
           </div>
 
@@ -462,10 +462,13 @@ export function QueueApp() {
                       {items.length}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {items.map((video, index) => (
+                  <SortableGrid
+                    items={items}
+                    onReorder={reorderVideos}
+                    className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+                  >
+                    {(video, index) => (
                       <VideoCard
-                        key={video.id}
                         video={video}
                         index={index}
                         onPriority={(priority) =>
@@ -478,8 +481,8 @@ export function QueueApp() {
                         subscribed={subscribedIds.has(video.id)}
                         onSubscribeChange={(next) => setSubscribed(video, next)}
                       />
-                    ))}
-                  </div>
+                    )}
+                  </SortableGrid>
                 </section>
               );
             })}

@@ -157,6 +157,8 @@ type QueueState = {
   removeVideo: (id: string) => void;
   setPriority: (id: string, priority: Priority) => void;
   patchVideo: (id: string, patch: Partial<QueueVideo>) => void;
+  /** Новый порядок карточек одной секции: они встают на занятые ими места. */
+  reorderVideos: (ids: string[]) => void;
 };
 
 export const useQueue = create<QueueState>()(
@@ -172,25 +174,51 @@ export const useQueue = create<QueueState>()(
         set((state) => ({
           videos: state.videos.filter((item) => item.id !== id),
         })),
+      // Порядок массива и есть порядок карточек на экране, поэтому карточка
+      // со сменённым приоритетом уходит в начало — наверх новой секции.
       setPriority: (id, priority) =>
-        set((state) => ({
-          videos: state.videos.map((item) =>
-            item.id === id ? { ...item, priority } : item,
-          ),
-        })),
+        set((state) => {
+          const target = state.videos.find((item) => item.id === id);
+          if (!target || target.priority === priority) return state;
+          return {
+            videos: [
+              { ...target, priority },
+              ...state.videos.filter((item) => item.id !== id),
+            ],
+          };
+        }),
       patchVideo: (id, patch) =>
         set((state) => ({
           videos: state.videos.map((item) =>
             item.id === id ? { ...item, ...patch } : item,
           ),
         })),
+      reorderVideos: (ids) =>
+        set((state) => {
+          const moving = new Set(ids);
+          const byId = new Map(state.videos.map((item) => [item.id, item]));
+          const ordered = ids.flatMap((id) => byId.get(id) ?? []);
+          let next = 0;
+          return {
+            videos: state.videos.map((item) =>
+              moving.has(item.id) ? ordered[next++] : item,
+            ),
+          };
+        }),
     }),
     {
       name: "ochered-queue",
       skipHydration: true,
-      version: 4,
-      migrate: (persisted) => {
+      version: 5,
+      migrate: (persisted, version) => {
         const state = persisted as { videos?: QueueVideo[] };
+        // До v5 порядок внутри секции задавала сортировка «новые сверху»;
+        // теперь он ручной и хранится порядком массива — стартуем с того же.
+        if (state?.videos && version < 5) {
+          state.videos = [...state.videos].sort(
+            (a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0),
+          );
+        }
         if (state?.videos) {
           state.videos = state.videos.map((video) => ({
             ...video,
@@ -206,11 +234,3 @@ export const useQueue = create<QueueState>()(
     },
   ),
 );
-
-export function sortQueue(videos: QueueVideo[]): QueueVideo[] {
-  return [...videos].sort((a, b) => {
-    const rank = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
-    if (rank !== 0) return rank;
-    return b.addedAt - a.addedAt;
-  });
-}

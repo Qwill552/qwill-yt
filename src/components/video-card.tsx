@@ -55,7 +55,7 @@ export function VideoCard({
 
   return (
     <article
-      className="card-enter flex flex-col rounded-xl bg-surface p-2 shadow-border"
+      className="card-enter flex h-full flex-col rounded-xl bg-surface p-2 shadow-border"
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
     >
       <a
@@ -284,8 +284,13 @@ function EpisodesEditor({ watched, available, onChange }: EpisodesEditorProps) {
         <Tv className="size-3.5" strokeWidth={1.75} />
         <input
           ref={inputRef}
-          type="text"
+          // number — ради встроенных стрелочек ±1 (на компьютере; на телефоне
+          // браузеры их не рисуют, там остаётся цифровая клавиатура).
+          type="number"
           inputMode="numeric"
+          min={0}
+          max={available}
+          step={1}
           value={draft}
           onChange={(event) =>
             setDraft(event.target.value.replace(/\D/g, "").slice(0, 4))
@@ -302,7 +307,7 @@ function EpisodesEditor({ watched, available, onChange }: EpisodesEditorProps) {
             }
           }}
           aria-label="Сколько серий просмотрено"
-          className="w-9 rounded-xs bg-bg/60 px-1 py-0.5 text-center text-fg tabular-nums outline outline-1 outline-accent/60 focus-visible:outline-accent"
+          className="w-14 rounded-xs bg-bg/60 px-1 py-0.5 text-center text-fg tabular-nums outline outline-1 outline-accent/60 focus-visible:outline-accent"
         />
         <span className="tabular-nums">/{available} эп.</span>
       </span>
