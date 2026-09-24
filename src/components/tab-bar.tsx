@@ -40,14 +40,16 @@ export function TabBar({ active, onChange }: TabBarProps) {
   return (
     <nav
       aria-label="Разделы"
-      className="fixed inset-x-0 bottom-5 z-30 flex justify-center px-4"
+      // Полоса на всю ширину нужна только для центрирования — клики сквозь
+      // неё уходят в страницу, ловит их лишь сама панель.
+      className="pointer-events-none fixed inset-x-0 bottom-5 z-30 flex justify-center px-4"
       style={{
         bottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))",
       }}
     >
       <div
         className={cn(
-          "relative flex items-center rounded-full",
+          "pointer-events-auto relative flex items-center rounded-full",
           "border border-white/15 bg-white/10 backdrop-blur-2xl backdrop-saturate-150",
           "shadow-[0_1px_0_rgb(255_255_255/0.25)_inset,0_8px_32px_-4px_rgb(0_0_0/0.45)]",
         )}
